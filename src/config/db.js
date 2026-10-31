@@ -300,75 +300,92 @@ async function initializeDatabase() {
     // Note: Default mock customer and staff seeds removed to maintain production cleanliness.
     // Live accounts are managed via registration and direct database administration.
 
-    // Seed Properties if table is empty
-    const [propertyCount] = await connection.query('SELECT COUNT(*) as count FROM `properties`');
-    if (propertyCount[0].count === 0) {
+    // Clean up old sample properties if present
+    await connection.query("DELETE FROM `properties` WHERE `id` IN ('lp-01', 'lp-02', 'lp-03', 'lp-04')");
+
+    // Sync 31 Official Lena Promoters Ongoing Layout Projects
+    const defaultLandImage = 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80';
+
+    const ongoingProjects = [
+      // 1. Karaikudi Layouts (17)
+      { id: 'lp-kkd-01', title: "Lena's Annamalaiyar Nagar", location: 'Kanadukathan', city: 'Karaikudi', priceStarting: '₹5,00,000 / cent', pricePerSqFt: '₹1,148 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP & RERA Approved', category: 'Layout Plots', isFeatured: 1 },
+      { id: 'lp-kkd-02', title: "Lena's Meenatchi Farm", location: 'Devakottai', city: 'Karaikudi', priceStarting: '₹35,000 / cent', pricePerSqFt: '₹80 / sq.ft', plotSizes: 'Farm Land', approval: 'Clear Title Deeds', category: 'Farm Lands', isFeatured: 0 },
+      { id: 'lp-kkd-03', title: "Lena's Metro City", location: 'Kallal', city: 'Karaikudi', priceStarting: '₹3,50,000 / cent', pricePerSqFt: '₹804 / sq.ft', plotSizes: 'Township Plots', approval: 'DTCP Approved', category: 'Gated Township', isFeatured: 1 },
+      { id: 'lp-kkd-04', title: "Lena's MS Nagar", location: 'Kallal', city: 'Karaikudi', priceStarting: '₹1,50,000 / cent', pricePerSqFt: '₹344 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-kkd-05', title: "Lena's Roja Avenue", location: 'Vettaikaranpatti', city: 'Karaikudi', priceStarting: '₹2,00,000 / cent', pricePerSqFt: '₹459 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-kkd-06', title: "Lena's SA Nagar", location: 'Kundrakudi', city: 'Karaikudi', priceStarting: '₹4,00,000 / cent', pricePerSqFt: '₹918 / sq.ft', plotSizes: 'Premium Plots', approval: 'DTCP & RERA Approved', category: 'Layout Plots', isFeatured: 1 },
+      { id: 'lp-kkd-07', title: "Lena's Sona Nagar", location: 'Kallal', city: 'Karaikudi', priceStarting: '₹1,50,000 / cent', pricePerSqFt: '₹344 / sq.ft', plotSizes: 'Plots Available', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-kkd-08', title: "Lena's Sri Sai Nagar", location: 'Aaravayal', city: 'Karaikudi', priceStarting: '₹3,50,000 / cent', pricePerSqFt: '₹804 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-kkd-09', title: "Lena's Swathi Nagar", location: 'Aaravayal', city: 'Karaikudi', priceStarting: '₹4,50,000 / cent', pricePerSqFt: '₹1,033 / sq.ft', plotSizes: 'Premium Villa Plots', approval: 'DTCP & RERA Approved', category: 'Villa Plots', isFeatured: 1 },
+      { id: 'lp-kkd-10', title: "Lena's Singapore City", location: 'Thirukalapatti', city: 'Karaikudi', priceStarting: '₹3,00,000 / cent', pricePerSqFt: '₹689 / sq.ft', plotSizes: 'Integrated Township', approval: 'DTCP Approved', category: 'Gated Township', isFeatured: 1 },
+      { id: 'lp-kkd-11', title: "Lena's Arpudha Nagar", location: 'Kambanur', city: 'Karaikudi', priceStarting: '₹2,00,000 / cent', pricePerSqFt: '₹459 / sq.ft', plotSizes: 'Plots Available', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-kkd-12', title: "Lena's Royal Apple Garden", location: 'Nachiyarpuram', city: 'Karaikudi', priceStarting: '₹2,00,000 / cent', pricePerSqFt: '₹459 / sq.ft', plotSizes: 'Garden Layout', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-kkd-13', title: "Lena's Annai Nagar", location: 'Koothalur', city: 'Karaikudi', priceStarting: '₹3,00,000 / cent', pricePerSqFt: '₹689 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-kkd-14', title: "Lena's Anandham Nagar", location: 'Sangarapathi Kottai', city: 'Karaikudi', priceStarting: '₹4,50,000 / cent', pricePerSqFt: '₹1,033 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP & RERA Approved', category: 'Layout Plots', isFeatured: 1 },
+      { id: 'lp-kkd-15', title: "Lena's Habibi Dubai Empire", location: 'Sevarakottai', city: 'Karaikudi', priceStarting: '₹3,50,000 / cent', pricePerSqFt: '₹804 / sq.ft', plotSizes: 'Grand Township', approval: 'DTCP & RERA Approved', category: 'Gated Township', isFeatured: 1 },
+      { id: 'lp-kkd-16', title: "Lena's Sivaram Nagar", location: 'S.V Mangalam', city: 'Karaikudi', priceStarting: '₹2,50,000 / cent', pricePerSqFt: '₹574 / sq.ft', plotSizes: 'Plots Available', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-kkd-17', title: "Lena's RVS Nagar", location: 'Nemam', city: 'Karaikudi', priceStarting: '₹4,00,000 / cent', pricePerSqFt: '₹918 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP & RERA Approved', category: 'Layout Plots', isFeatured: 0 },
+
+      // 2. Coimbatore Layouts (6)
+      { id: 'lp-cbe-01', title: "Lena's Sindhu Nagar", location: 'Veerapandi Pirivu', city: 'Coimbatore', priceStarting: '₹5,50,000 / cent', pricePerSqFt: '₹1,263 / sq.ft', plotSizes: 'Villa Plots', approval: 'DTCP & RERA Approved', category: 'Villa Plots', isFeatured: 1 },
+      { id: 'lp-cbe-02', title: "Lena's SVPR Grand", location: 'Karamadai (Vijayanagram)', city: 'Coimbatore', priceStarting: '₹6,00,000 / cent', pricePerSqFt: '₹1,377 / sq.ft', plotSizes: 'Gated Township', approval: 'DTCP & RERA Approved', category: 'Gated Township', isFeatured: 1 },
+      { id: 'lp-cbe-03', title: "Lena's Nakshatra Nagar", location: 'Karamadai (Vijayanagram)', city: 'Coimbatore', priceStarting: '₹8,00,000 / cent', pricePerSqFt: '₹1,837 / sq.ft', plotSizes: 'Luxury Villa Plots', approval: 'DTCP & RERA Approved', category: 'Villa Plots', isFeatured: 1 },
+      { id: 'lp-cbe-04', title: "Lena's Vetri Nagar", location: 'Sulur (Karanampettai)', city: 'Coimbatore', priceStarting: '₹6,00,000 / cent', pricePerSqFt: '₹1,377 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP & RERA Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-cbe-05', title: "Lena's Ashwin Nagar", location: 'Annur', city: 'Coimbatore', priceStarting: '₹8,00,000 / cent', pricePerSqFt: '₹1,837 / sq.ft', plotSizes: 'Premium Layout', approval: 'DTCP & RERA Approved', category: 'Villa Plots', isFeatured: 0 },
+      { id: 'lp-cbe-06', title: "Lena's Ancia Farms", location: 'Mettupalayam', city: 'Coimbatore', priceStarting: '₹3,00,000 / cent', pricePerSqFt: '₹689 / sq.ft', plotSizes: 'Farm Lands', approval: 'Clear Title Deeds', category: 'Farm Lands', isFeatured: 0 },
+
+      // 3. Sivagangai Layouts (5)
+      { id: 'lp-svg-01', title: "Lena's Ram Nagar", location: 'Sivagangai', city: 'Sivagangai', priceStarting: '₹2,50,000 / cent', pricePerSqFt: '₹574 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-svg-02', title: "Lena's Shanmuga Avenue", location: 'Thirumanjolai', city: 'Sivagangai', priceStarting: '₹4,00,000 / cent', pricePerSqFt: '₹918 / sq.ft', plotSizes: 'Villa Plots', approval: 'DTCP & RERA Approved', category: 'Layout Plots', isFeatured: 1 },
+      { id: 'lp-svg-03', title: "Lena's Chithambaram Farms", location: 'Sivagangai', city: 'Sivagangai', priceStarting: '₹35,000 / cent', pricePerSqFt: '₹80 / sq.ft', plotSizes: 'Farm Lands', approval: 'Clear Title Deeds', category: 'Farm Lands', isFeatured: 0 },
+      { id: 'lp-svg-04', title: "Lena's Crown Nachiyar Avenue", location: 'Puduppatti', city: 'Sivagangai', priceStarting: '₹2,50,000 / cent', pricePerSqFt: '₹574 / sq.ft', plotSizes: 'Plots Available', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-svg-05', title: "Lena's Senthur Garden", location: 'Solapuram', city: 'Sivagangai', priceStarting: '₹5,00,000 / cent', pricePerSqFt: '₹1,148 / sq.ft', plotSizes: 'Garden Layout', approval: 'DTCP & RERA Approved', category: 'Layout Plots', isFeatured: 1 },
+
+      // 4. Pudukkottai Layouts (2)
+      { id: 'lp-pdk-01', title: "Lena's Vetri Nagar", location: 'Lena Vilakku', city: 'Pudukkottai', priceStarting: '₹1,10,000 / cent', pricePerSqFt: '₹253 / sq.ft', plotSizes: 'Residential Plots', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+      { id: 'lp-pdk-02', title: "Lena's Eswaran Nagar", location: 'Pudukkottai', city: 'Pudukkottai', priceStarting: '₹1,50,000 / cent', pricePerSqFt: '₹344 / sq.ft', plotSizes: 'Plots Available', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 0 },
+
+      // 5. Madurai Layouts (1)
+      { id: 'lp-mdu-01', title: "Lena's Velavan Nagar", location: 'Kariyapatti', city: 'Madurai', priceStarting: '₹4,00,000 / plot', pricePerSqFt: '₹4,00,000 / plot', plotSizes: 'Individual Plots', approval: 'DTCP Approved', category: 'Layout Plots', isFeatured: 1 },
+    ];
+
+    for (const p of ongoingProjects) {
+      const amenities = p.category === 'Farm Lands'
+        ? JSON.stringify(["Sweet Ground Water", "Clear Title Deeds", "Fencing", "Road Access"])
+        : p.category === 'Gated Township'
+          ? JSON.stringify(["Grand Entrance Arch", "24/7 Security", "Solar Street Lights", "Tar Road", "Children Play Area", "Immediate Registration"])
+          : JSON.stringify(["40ft Tar Road", "Sweet Ground Water", "Clear Parent Deeds", "Electricity Facility", "Immediate Registration"]);
+
       await connection.query(`
         INSERT INTO \`properties\` (\`id\`, \`title\`, \`location\`, \`city\`, \`price_starting\`, \`price_per_sqft\`, \`plot_sizes\`, \`approval\`, \`rera_number\`, \`category\`, \`image_path\`, \`amenities\`, \`is_featured\`)
-        VALUES
-        (
-          'lp-01', 
-          'Lena Emerald Enclave', 
-          'Tambaram - Mudichur Road', 
-          'Chennai & Around', 
-          '₹22.5 Lakhs', 
-          '₹2,250 / sq.ft', 
-          '1,000 - 2,400 sq.ft', 
-          'CMDA & RERA Approved', 
-          'TN/01/Layout/1420/2024', 
-          'Villa Plots', 
-          'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?auto=format&fit=crop&w=1200&q=80', 
-          '["40ft Tar Road", "Grand Entrance Arch", "24/7 Security", "Potable Water", "Children Play Park"]', 
-          1
-        ),
-        (
-          'lp-02', 
-          'Lena Grand Meadows', 
-          'Kelambakkam, OMR Tech Corridor', 
-          'Chennai & Around', 
-          '₹28.0 Lakhs', 
-          '₹2,800 / sq.ft', 
-          '1,200 - 3,000 sq.ft', 
-          'DTCP & RERA Approved', 
-          'TN/02/Layout/0891/2024', 
-          'Gated Township', 
-          'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=1200&q=80', 
-          '["Avenue Trees", "Solar Street Lights", "Underground Drainage", "Clubhouse Site", "Immediate Registration"]', 
-          1
-        ),
-        (
-          'lp-03', 
-          'Lena Royal Palms', 
-          'Avadi - Thiruninravur Link', 
-          'Chennai & Around', 
-          '₹16.8 Lakhs', 
-          '₹1,680 / sq.ft', 
-          '800 - 1,800 sq.ft', 
-          'CMDA & RERA Approved', 
-          'TN/01/Layout/2201/2024', 
-          'Villa Plots', 
-          'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80', 
-          '["30ft Blacktop Roads", "Clear Title Deeds", "Bank Loan Up to 85%", "Sweet Ground Water"]', 
-          0
-        ),
-        (
-          'lp-04', 
-          'Lena Smart City Plots', 
-          'Kovaipudur High Growth Zone', 
-          'Coimbatore & Tirupur', 
-          '₹19.5 Lakhs', 
-          '₹1,950 / sq.ft', 
-          '1,000 - 2,500 sq.ft', 
-          'DTCP & RERA Approved', 
-          'TN/03/Layout/3310/2024', 
-          'Smart Community', 
-          'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=1200&q=80', 
-          '["Gated Entrance", "CCTV Surveillance", "Lush Mountain View", "Compound Wall"]', 
-          1
-        )
-      `);
-      console.log('🌱 Seeded sample properties matching Flutter app');
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          \`title\` = VALUES(\`title\`),
+          \`location\` = VALUES(\`location\`),
+          \`city\` = VALUES(\`city\`),
+          \`price_starting\` = VALUES(\`price_starting\`),
+          \`price_per_sqft\` = VALUES(\`price_per_sqft\`),
+          \`plot_sizes\` = VALUES(\`plot_sizes\`),
+          \`approval\` = VALUES(\`approval\`),
+          \`category\` = VALUES(\`category\`),
+          \`is_featured\` = VALUES(\`is_featured\`)
+      `, [
+        p.id,
+        p.title,
+        p.location,
+        p.city,
+        p.priceStarting,
+        p.pricePerSqFt,
+        p.plotSizes,
+        p.approval,
+        p.reraNumber || '',
+        p.category,
+        defaultLandImage,
+        amenities,
+        p.isFeatured
+      ]);
     }
+    console.log('🏛️ Synced 31 official Lena Promoters ongoing layout projects to DB');
 
     // Seed Active Lucky Draw Scheme
     const [schemeCount] = await connection.query('SELECT COUNT(*) as count FROM `lucky_draw_schemes`');

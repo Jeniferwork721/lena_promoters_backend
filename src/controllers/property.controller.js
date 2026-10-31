@@ -149,10 +149,28 @@ async function createProperty(req, res, next) {
       ]
     );
 
+    const createdProperty = {
+      id: propertyId,
+      title,
+      location,
+      city,
+      priceStarting,
+      pricePerSqFt: pricePerSqFt || priceStarting,
+      plotSizes: plotSizes || 'Plots Available',
+      approval: approval || 'DTCP & RERA Approved',
+      reraNumber: reraNumber || '',
+      category,
+      imagePath: imagePath || 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80',
+      amenities: Array.isArray(amenities) ? amenities : ['40ft Road', 'Sweet Ground Water', 'Clear Parent Deeds'],
+      isFeatured: Boolean(isFeatured),
+    };
+
     return res.status(201).json({
       success: true,
       message: 'Property listing created successfully',
       propertyId,
+      property: createdProperty,
+      data: createdProperty,
     });
   } catch (err) {
     next(err);
@@ -220,9 +238,27 @@ async function updateProperty(req, res, next) {
       ]
     );
 
+    const updated = {
+      id,
+      title: title ?? current.title,
+      location: location ?? current.location,
+      city: city ?? current.city,
+      priceStarting: priceStarting ?? current.price_starting,
+      pricePerSqFt: pricePerSqFt ?? current.price_per_sqft,
+      plotSizes: plotSizes ?? current.plot_sizes,
+      approval: approval ?? current.approval,
+      reraNumber: reraNumber ?? current.rera_number,
+      category: category ?? current.category,
+      imagePath: imagePath ?? current.image_path,
+      amenities: amenities !== undefined ? (Array.isArray(amenities) ? amenities : []) : (typeof current.amenities === 'string' ? JSON.parse(current.amenities || '[]') : (current.amenities || [])),
+      isFeatured: isFeatured !== undefined ? Boolean(isFeatured) : Boolean(current.is_featured),
+    };
+
     return res.status(200).json({
       success: true,
       message: 'Property updated successfully',
+      property: updated,
+      data: updated,
     });
   } catch (err) {
     next(err);
