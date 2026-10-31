@@ -58,8 +58,8 @@ async function getActiveScheme(req, res, next) {
     const scheme = rows.length > 0 ? rows[0] : {
       scheme_name: 'Lena Promoters ₹500 Mega Land Lucky Draw',
       entry_fee: '500.00',
-      bumper_prize: '1,200 Sq.Ft DTCP Approved Villa Plot',
-      assured_gift: 'Guaranteed ₹500 Worth Gift Kit / Voucher',
+      bumper_prize: 'DTCP Approved Land',
+      assured_gift: 'Guaranteed ₹500 Worth Gift',
       terms_summary: '1. Entry fee is strictly ₹500. 2. Staff verification and official payment receipt are mandatory.',
     };
 

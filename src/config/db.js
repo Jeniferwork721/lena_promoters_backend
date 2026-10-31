@@ -96,8 +96,8 @@ async function initializeDatabase() {
         \`id\` INT AUTO_INCREMENT PRIMARY KEY,
         \`scheme_name\` VARCHAR(150) NOT NULL,
         \`entry_fee\` DECIMAL(10,2) NOT NULL DEFAULT 500.00,
-        \`bumper_prize\` VARCHAR(255) NOT NULL DEFAULT '1,200 Sq.Ft DTCP Approved Villa Plot',
-        \`assured_gift\` VARCHAR(255) NOT NULL DEFAULT 'Guaranteed ₹500 Worth Gift Kit / Voucher',
+        \`bumper_prize\` VARCHAR(255) NOT NULL DEFAULT 'DTCP Approved Land',
+        \`assured_gift\` VARCHAR(255) NOT NULL DEFAULT 'Guaranteed ₹500 Worth Gift',
         \`terms_summary\` TEXT,
         \`is_active\` TINYINT(1) NOT NULL DEFAULT 1,
         \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -400,9 +400,9 @@ async function initializeDatabase() {
         (
           'Lena Promoters ₹500 Mega Land Lucky Draw', 
           500.00, 
-          '1,200 Sq.Ft DTCP Approved Villa Plot', 
-          'Guaranteed ₹500 Worth Gift Kit / Voucher', 
-          '1. Entry fee is strictly ₹500. 2. Staff verification and official payment receipt are mandatory. 3. Winner will receive free registration of 1,200 Sq.Ft plot.', 
+          'DTCP Approved Land', 
+          'Guaranteed ₹500 Worth Gift', 
+          '1. Entry fee is strictly ₹500. 2. Staff verification and official payment receipt are mandatory. 3. Winner will receive free registration of land, otherwise non-winners receive guaranteed ₹500 worth gift.', 
           1
         )
       `);
