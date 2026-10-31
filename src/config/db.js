@@ -297,29 +297,8 @@ async function initializeDatabase() {
     }
     console.log('🏛️ Synced 5 official Lena Promoters branches to DB');
 
-    // Seed Default Customer if table is empty
-    const [customerCount] = await connection.query('SELECT COUNT(*) as count FROM `customers`');
-    if (customerCount[0].count === 0) {
-      await connection.query(`
-        INSERT INTO \`customers\` (\`full_name\`, \`phone_number\`, \`email\`)
-        VALUES ('Karthik Subramanian', '9876543210', 'karthik.subramanian@gmail.com')
-      `);
-      console.log('🌱 Seeded default customer account (Karthik Subramanian / 9876543210)');
-    }
-
-    // Seed Default Staff if table is empty
-    const [staffCount] = await connection.query('SELECT COUNT(*) as count FROM `staff_users`');
-    if (staffCount[0].count === 0) {
-      const defaultHash = await bcrypt.hash('LenaStaff@2026', 10);
-      await connection.query(`
-        INSERT INTO \`staff_users\` (\`employee_id\`, \`full_name\`, \`email\`, \`phone_number\`, \`password_hash\`, \`branch_location\`, \`role\`)
-        VALUES 
-        ('LP-EMP-104', 'Rajesh Kumar', 'staff@lenapromoters.com', '9840123456', ?, 'Karaikudi – Head Office', 'STAFF'),
-        ('LP-EMP-208', 'Priya Sundaram', 'priya.s@lenapromoters.com', '9444198765', ?, 'Coimbatore Branch', 'STAFF'),
-        ('LP-ADMIN-01', 'Lena Admin', 'admin@lenapromoters.com', '9999900000', ?, 'Karaikudi – Head Office', 'ADMIN')
-      `, [defaultHash, defaultHash, defaultHash]);
-      console.log('🌱 Seeded default staff accounts (Password: LenaStaff@2026)');
-    }
+    // Note: Default mock customer and staff seeds removed to maintain production cleanliness.
+    // Live accounts are managed via registration and direct database administration.
 
     // Seed Properties if table is empty
     const [propertyCount] = await connection.query('SELECT COUNT(*) as count FROM `properties`');
@@ -409,50 +388,7 @@ async function initializeDatabase() {
       console.log('🌱 Seeded active lucky draw scheme');
     }
 
-    // Seed Sample Coupons
-    const [couponCount] = await connection.query('SELECT COUNT(*) as count FROM `lucky_draw_coupons`');
-    if (couponCount[0].count === 0) {
-      await connection.query(`
-        INSERT INTO \`lucky_draw_coupons\` 
-        (\`id\`, \`coupon_number\`, \`customer_name\`, \`date_of_birth\`, \`phone_number\`, \`address\`, \`entry_fee\`, \`status\`, \`staff_name\`, \`staff_id\`, \`payment_trans_id\`, \`payment_mode\`, \`payment_screenshot_name\`, \`payment_screenshot_url\`, \`verified_at\`)
-        VALUES 
-        (
-          'ld-001', 
-          'LENA-LD-8801', 
-          'Anand Kumar V', 
-          '1992-05-14', 
-          '+91 98402 11223', 
-          'No. 24, Gandhi Road, Tambaram West, Chennai - 600045', 
-          500.00, 
-          'VERIFIED_AND_PAID', 
-          'Rajesh Kumar', 
-          'LP-EMP-104', 
-          'UPI-SBI-20261025-992182', 
-          'Google Pay (UPI)', 
-          'sample_receipt_8801.png', 
-          NULL, 
-          NOW()
-        ),
-        (
-          'ld-002', 
-          'LENA-LD-8802', 
-          'Meenakshi Sundaram', 
-          '1988-11-20', 
-          '+91 97910 88776', 
-          'Plot 12, Sri Devi Nagar, Avadi, Chennai - 600054', 
-          500.00, 
-          'PENDING_STAFF_VERIFICATION', 
-          NULL, 
-          NULL, 
-          NULL, 
-          NULL, 
-          NULL, 
-          NULL, 
-          NULL
-        )
-      `);
-      console.log('🌱 Seeded initial sample coupons');
-    }
+    // Note: Mock coupon seeding disabled to retain only real applicant and verified coupon entries.
 
   } catch (err) {
     const errorDetail = err.code || err.message || 'ECONNREFUSED';
