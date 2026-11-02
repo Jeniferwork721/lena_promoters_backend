@@ -1,22 +1,11 @@
 const { pool } = require('../config/db');
 
 /**
- * Generates the next sequential Lucky Draw coupon number (e.g. LENA-LD-8807).
- * Continuously increments from the highest existing coupon number.
+ * Generates an array of continuous sequential Lucky Draw coupon numbers.
+ * e.g. ['LENA-LD-8807', 'LENA-LD-8808', ...]
  */
-async function generateNextCouponNumber(customNumber = null) {
-  // If customNumber is explicitly provided and is free, use it
-  if (customNumber && typeof customNumber === 'string' && customNumber.trim().length > 0) {
-    const formatted = customNumber.trim().toUpperCase();
-    const [existing] = await pool.query(
-      'SELECT id FROM lucky_draw_coupons WHERE coupon_number = ?',
-      [formatted]
-    );
-    if (existing.length === 0) {
-      return formatted;
-    }
-    console.log(`ℹ️ [Coupon Generator] Requested number ${formatted} is already assigned. Finding next sequential token.`);
-  }
+async function generateNextCouponNumbers(count = 1) {
+  const safeCount = Math.max(1, parseInt(count, 10) || 1);
 
   // Scan all existing coupons in database to find highest numeric token
   const [rows] = await pool.query(
@@ -32,22 +21,45 @@ async function generateNextCouponNumber(customNumber = null) {
     }
   }
 
-  // Continuously find next unused sequential token
+  const generated = [];
   let candidate = maxNumber + 1;
-  while (true) {
+  while (generated.length < safeCount) {
     const candidateStr = `LENA-LD-${candidate}`;
     const [found] = await pool.query(
       'SELECT id FROM lucky_draw_coupons WHERE coupon_number = ?',
       [candidateStr]
     );
     if (found.length === 0) {
-      console.log(`🎟️ [Coupon Generator] Continuously generated next token: ${candidateStr}`);
-      return candidateStr;
+      generated.push(candidateStr);
     }
     candidate++;
   }
+
+  return generated;
+}
+
+/**
+ * Generates single next sequential Lucky Draw coupon number.
+ */
+async function generateNextCouponNumber(customNumber = null) {
+  // If customNumber is explicitly provided and is free, use it
+  if (customNumber && typeof customNumber === 'string' && customNumber.trim().length > 0) {
+    const formatted = customNumber.trim().toUpperCase();
+    const [existing] = await pool.query(
+      'SELECT id FROM lucky_draw_coupons WHERE coupon_number = ?',
+      [formatted]
+    );
+    if (existing.length === 0) {
+      return formatted;
+    }
+    console.log(`ℹ️ [Coupon Generator] Requested number ${formatted} is already assigned. Finding next sequential token.`);
+  }
+
+  const [single] = await generateNextCouponNumbers(1);
+  return single;
 }
 
 module.exports = {
   generateNextCouponNumber,
+  generateNextCouponNumbers,
 };

@@ -1,5 +1,5 @@
 const { pool } = require('../config/db');
-const { generateNextCouponNumber } = require('../utils/couponGenerator');
+const { generateNextCouponNumber, generateNextCouponNumbers } = require('../utils/couponGenerator');
 
 /**
  * Helper: Automatically captures customer profile into the `customers` table
@@ -120,60 +120,88 @@ async function customerApply(req, res, next) {
     }
     const finalTransId = cleanTransId || (hasScreenshot ? 'UPI_RECEIPT_ATTACHED' : null);
 
-    // Auto-generate next sequential coupon number continuously
-    const couponNumber = await generateNextCouponNumber();
-    const id = `ld-${Date.now()}`;
+    // Parse requested coupon quantity (Offer: Buy 10 coupons -> 1 FREE coupon)
+    const quantity = Math.max(1, parseInt(req.body.quantity, 10) || 1);
+    const freeCount = Math.floor(quantity / 10);
+    const totalCount = quantity + freeCount;
+    const totalAmount = quantity * 500;
+
+    // Auto-generate next sequential coupon numbers continuously in batch
+    const couponNumbers = await generateNextCouponNumbers(totalCount);
     const entryFee = 500.00;
     const status = 'PENDING_STAFF_VERIFICATION';
     const applicantPhone = (req.body.applicantPhone || '').trim() || null;
     const recipientEmail = (req.body.email || '').trim() || null;
+    const nowTs = Date.now();
+    const createdAtIso = new Date().toISOString();
 
-    await pool.query(
-      `INSERT INTO lucky_draw_coupons 
-        (id, coupon_number, customer_name, date_of_birth, phone_number, email, address, referred_by, applicant_phone, entry_fee, status, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        couponNumber,
-        customerName.trim(),
-        dateOfBirth,
-        phoneNumber.trim(),
-        recipientEmail,
-        address.trim(),
-        finalReferredBy,
-        applicantPhone,
-        entryFee,
-        status,
-        finalTransId,
-        paymentMode || 'UPI QR',
-        paymentScreenshotName || null,
-        paymentScreenshotUrl || null,
-      ]
-    );
+    const createdCoupons = [];
 
-    // USER RULE: If applicant (e.g. jeni@gmail.com) enters coupon for someone else (e.g. keerthi@gmail.com),
-    // coupon is accepted and registered, but DO NOT create that user in the customers table!
-    // The recipient (Keerthi) can create their own separate account independently.
-    console.log(`🎟️ [Coupon Issued] Coupon ${couponNumber} registered for ${customerName.trim()} (Phone: ${phoneNumber.trim()}). No customer user created.`);
+    for (let i = 0; i < couponNumbers.length; i++) {
+      const cNum = couponNumbers[i];
+      const couponId = `ld-${nowTs}-${i}-${Math.random().toString(36).substring(2, 6)}`;
+      const isBonus = i >= quantity; // coupons beyond the paid count are free promotional tickets
 
-    return res.status(201).json({
-      success: true,
-      message: 'Lucky draw coupon applied successfully. Staff verification pending.',
-      coupon: {
-        id,
-        couponNumber,
+      await pool.query(
+        `INSERT INTO lucky_draw_coupons 
+          (id, coupon_number, customer_name, date_of_birth, phone_number, email, address, referred_by, applicant_phone, entry_fee, status, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          couponId,
+          cNum,
+          customerName.trim(),
+          dateOfBirth,
+          phoneNumber.trim(),
+          recipientEmail,
+          address.trim(),
+          finalReferredBy,
+          applicantPhone,
+          entryFee,
+          status,
+          finalTransId,
+          paymentMode || 'UPI QR',
+          paymentScreenshotName || null,
+          paymentScreenshotUrl || null,
+        ]
+      );
+
+      createdCoupons.push({
+        id: couponId,
+        couponNumber: cNum,
         customerName: customerName.trim(),
         dateOfBirth,
         phoneNumber: phoneNumber.trim(),
+        email: recipientEmail,
         address: address.trim(),
-        referredBy: referredBy ? referredBy.trim() : null,
+        referredBy: finalReferredBy,
+        applicantPhone,
         entryFee,
         status,
-        paymentTransId: paymentTransId || null,
+        paymentTransId: finalTransId,
         paymentMode: paymentMode || 'UPI QR',
         paymentScreenshotName: paymentScreenshotName || null,
         paymentScreenshotUrl: paymentScreenshotUrl || null,
-        createdAt: new Date().toISOString(),
+        isBonus,
+        createdAt: createdAtIso,
+      });
+    }
+
+    console.log(`🎟️ [Batch Coupons Issued] ${totalCount} coupon(s) (${quantity} paid + ${freeCount} free bonus) registered for ${customerName.trim()} (Phone: ${phoneNumber.trim()}). Tokens: ${couponNumbers.join(', ')}`);
+
+    const successMsg = totalCount > 1
+      ? `${totalCount} Lucky Draw coupons applied successfully (${quantity} paid + ${freeCount} FREE bonus). Staff verification pending.`
+      : 'Lucky draw coupon applied successfully. Staff verification pending.';
+
+    return res.status(201).json({
+      success: true,
+      message: successMsg,
+      coupon: createdCoupons[0],
+      coupons: createdCoupons,
+      summary: {
+        quantity,
+        freeCount,
+        totalCount,
+        totalAmount,
       },
     });
   } catch (err) {
