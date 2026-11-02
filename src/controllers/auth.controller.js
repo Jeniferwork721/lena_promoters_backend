@@ -989,6 +989,74 @@ async function updateCustomerProfile(req, res, next) {
 }
 
 /**
+ * 10b. Get Customer Profile by phone or query
+ */
+async function getCustomerProfile(req, res, next) {
+  try {
+    const rawInput = req.query.phone || req.query.phoneNumber || req.query.email || '';
+    if (!rawInput) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number or email is required.',
+      });
+    }
+
+    const cleanInput = rawInput.trim();
+    let rows = [];
+
+    if (cleanInput.includes('@')) {
+      const [emailRows] = await pool.query(
+        `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic
+         FROM customers WHERE LOWER(email) = LOWER(?) AND is_active = 1 LIMIT 1`,
+        [cleanInput]
+      );
+      rows = emailRows;
+    } else {
+      const cleanPhone = cleanInput.replace(/[^0-9]/g, '');
+      const last10 = cleanPhone.slice(-10);
+      const [phoneRows] = await pool.query(
+        `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic
+         FROM customers WHERE phone_number LIKE ? AND is_active = 1 LIMIT 1`,
+        [`%${last10}`]
+      );
+      rows = phoneRows;
+    }
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer profile not found.',
+      });
+    }
+
+    const customer = rows[0];
+    return res.status(200).json({
+      success: true,
+      customer: {
+        id: customer.id,
+        fullName: customer.full_name,
+        phoneNumber: customer.phone_number,
+        email: customer.email || '',
+        address: customer.address || '',
+        dateOfBirth: customer.date_of_birth || '',
+        street: customer.street || '',
+        landmark: customer.landmark || '',
+        city: customer.city || '',
+        pincode: customer.pincode || '',
+        aadharNumber: customer.aadhar_number || '',
+        panNumber: customer.pan_number || '',
+        nomineeName: customer.nominee_name || '',
+        dreamLandSize: customer.dream_land_size || '',
+        occupation: customer.occupation || '',
+        profilePic: customer.profile_pic || '',
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * 11. Staff Profile Update (Name, Email, Assigned Branch)
  */
 async function updateStaffProfile(req, res, next) {
@@ -1078,6 +1146,7 @@ module.exports = {
   sendCustomerOtp,
   loginCustomerWithOtp,
   registerCustomer,
+  getCustomerProfile,
   updateCustomerProfile,
   updateStaffProfile,
   refreshAccessToken,

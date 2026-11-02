@@ -17,6 +17,7 @@ router.get('/branches', branchController.getBranches);
 router.post('/customer/send-otp', authController.sendCustomerOtp);
 router.post('/customer/login-otp', authController.loginCustomerWithOtp);
 router.post('/customer/register', authController.registerCustomer);
+router.get('/customer/profile', authController.getCustomerProfile);
 router.put('/customer/profile', authController.updateCustomerProfile);
 router.post('/customer/profile', authController.updateCustomerProfile);
 
