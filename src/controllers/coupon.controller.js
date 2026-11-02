@@ -104,6 +104,22 @@ async function customerApply(req, res, next) {
       });
     }
 
+    // Referral: If not referred by specific staff, register under official Company Profile
+    const finalReferredBy = (referredBy && referredBy.trim().length > 0)
+      ? referredBy.trim()
+      : 'Lena Promoters (Company Direct)';
+
+    // Payment validation: either UPI Transaction ID OR screenshot is required
+    const cleanTransId = (paymentTransId || '').trim();
+    const hasScreenshot = Boolean(paymentScreenshotName || paymentScreenshotUrl);
+    if (!cleanTransId && !hasScreenshot) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment proof is required. Please provide UPI Transaction ID or upload receipt screenshot.',
+      });
+    }
+    const finalTransId = cleanTransId || (hasScreenshot ? 'UPI_RECEIPT_ATTACHED' : null);
+
     // Auto-generate next sequential coupon number continuously
     const couponNumber = await generateNextCouponNumber();
     const id = `ld-${Date.now()}`;
@@ -124,11 +140,11 @@ async function customerApply(req, res, next) {
         phoneNumber.trim(),
         recipientEmail,
         address.trim(),
-        referredBy ? referredBy.trim() : null,
+        finalReferredBy,
         applicantPhone,
         entryFee,
         status,
-        paymentTransId ? paymentTransId.trim() : null,
+        finalTransId,
         paymentMode || 'UPI QR',
         paymentScreenshotName || null,
         paymentScreenshotUrl || null,
@@ -202,9 +218,9 @@ async function getStaffEntries(req, res, next) {
     }
 
     if (search && search.trim().length > 0) {
-      whereClause += ' AND (coupon_number LIKE ? OR customer_name LIKE ? OR phone_number LIKE ? OR staff_name LIKE ?)';
+      whereClause += ' AND (coupon_number LIKE ? OR customer_name LIKE ? OR phone_number LIKE ? OR staff_name LIKE ? OR referred_by LIKE ?)';
       const term = `%${search.trim()}%`;
-      params.push(term, term, term, term);
+      params.push(term, term, term, term, term);
     }
 
     if (staffId && staffId.trim().length > 0 && staffId !== 'ALL') {
@@ -349,6 +365,7 @@ async function staffEditAndVerify(req, res, next) {
       dateOfBirth,
       phoneNumber,
       address,
+      referredBy,
       couponNumber,
       staffName,
       staffId,
@@ -386,39 +403,45 @@ async function staffEditAndVerify(req, res, next) {
     const newStatus = markAsVerified ? 'VERIFIED_AND_PAID' : current.status;
     const verifiedAt = markAsVerified ? new Date() : current.verified_at;
 
-    await pool.query(
-      `UPDATE lucky_draw_coupons SET
-        coupon_number = ?,
-        customer_name = ?,
-        date_of_birth = ?,
-        phone_number = ?,
-        address = ?,
-        staff_name = ?,
-        staff_id = ?,
-        payment_trans_id = ?,
-        payment_mode = ?,
-        payment_screenshot_name = ?,
-        payment_screenshot_url = ?,
-        status = ?,
-        verified_at = ?
-       WHERE id = ?`,
-      [
-        finalCouponNo,
-        customerName ?? current.customer_name,
-        dateOfBirth ?? current.date_of_birth,
-        phoneNumber ?? current.phone_number,
-        address ?? current.address,
-        staffName ?? current.staff_name,
-        staffId ?? current.staff_id,
-        paymentTransId ?? current.payment_trans_id,
-        paymentMode ?? current.payment_mode,
-        paymentScreenshotName ?? current.payment_screenshot_name,
-        paymentScreenshotUrl ?? current.payment_screenshot_url,
-        newStatus,
-        verifiedAt,
-        id,
-      ]
-    );
+    const finalReferred = referredBy !== undefined
+      ? (referredBy && referredBy.trim().length > 0 ? referredBy.trim() : 'Lena Promoters (Company Direct)')
+      : current.referred_by;
+
+      await pool.query(
+        `UPDATE lucky_draw_coupons SET
+          coupon_number = ?,
+          customer_name = ?,
+          date_of_birth = ?,
+          phone_number = ?,
+          address = ?,
+          referred_by = ?,
+          staff_name = ?,
+          staff_id = ?,
+          payment_trans_id = ?,
+          payment_mode = ?,
+          payment_screenshot_name = ?,
+          payment_screenshot_url = ?,
+          status = ?,
+          verified_at = ?
+         WHERE id = ?`,
+        [
+          finalCouponNo,
+          customerName ?? current.customer_name,
+          dateOfBirth ?? current.date_of_birth,
+          phoneNumber ?? current.phone_number,
+          address ?? current.address,
+          finalReferred,
+          staffName ?? current.staff_name,
+          staffId ?? current.staff_id,
+          paymentTransId ?? current.payment_trans_id,
+          paymentMode ?? current.payment_mode,
+          paymentScreenshotName ?? current.payment_screenshot_name,
+          paymentScreenshotUrl ?? current.payment_screenshot_url,
+          newStatus,
+          verifiedAt,
+          id,
+        ]
+      );
 
     // Note: Verification updates only the coupon record; user profiles remain managed by users.
 

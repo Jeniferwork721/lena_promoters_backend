@@ -317,6 +317,14 @@ async function initializeDatabase() {
     }
     console.log('🏛️ Synced 5 official Lena Promoters branches to DB');
 
+    // Ensure official Lena Promoters Company Profile in staff_users for direct referrals
+    await connection.query(
+      "INSERT INTO `staff_users` (`employee_id`, `full_name`, `email`, `phone_number`, `password_hash`, `branch_location`, `role`, `is_active`) " +
+      "VALUES ('LP-COMPANY', 'Lena Promoters (Company Direct)', 'info@lenapromoters.com', '+919999999999', '$2a$10$wK1.V/f8Qe550c.8p6g8mOs.aQYg.l1wFp30yYF3bC6Xq7v4vL0re', 'Head Office - Chennai', 'ADMIN', 1) " +
+      "ON DUPLICATE KEY UPDATE `full_name` = 'Lena Promoters (Company Direct)', `branch_location` = 'Head Office - Chennai', `is_active` = 1"
+    );
+    console.log('🏢 [DB Seed] Synced official Company Profile (LP-COMPANY) to DB');
+
     // Note: Default mock customer and staff seeds removed to maintain production cleanliness.
     // Live accounts are managed via registration and direct database administration.
 

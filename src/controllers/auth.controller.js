@@ -853,26 +853,46 @@ async function logout(req, res, next) {
  * 11. Public Staff Directory (Used for Referrals and Staff Dropdown)
  */
 async function getStaffDirectory(req, res, next) {
-  try {
-    const [rows] = await pool.query(
-      'SELECT id, employee_id, full_name, branch_location, role FROM staff_users WHERE is_active = 1 ORDER BY full_name ASC'
-    );
+    try {
+      const [rows] = await pool.query(
+        'SELECT id, employee_id, full_name, branch_location, role FROM staff_users WHERE is_active = 1 ORDER BY full_name ASC'
+      );
 
-    const staffList = rows.map(r => ({
-      id: r.id,
-      employeeId: r.employee_id,
-      fullName: r.full_name,
-      branch: r.branch_location,
-      role: r.role,
-    }));
+      const companyProfile = {
+        id: 0,
+        employeeId: 'LP-COMPANY',
+        fullName: 'Lena Promoters (Company Direct)',
+        branch: 'Head Office - Chennai',
+        role: 'ADMIN',
+      };
 
-    return res.status(200).json({
-      success: true,
-      staff: staffList,
-    });
-  } catch (err) {
-    next(err);
-  }
+      const hasCompany = rows.some(r => r.employee_id === 'LP-COMPANY' || (r.full_name && r.full_name.includes('Company Direct')));
+      const staffList = hasCompany
+        ? rows.map(r => ({
+            id: r.id,
+            employeeId: r.employee_id,
+            fullName: r.full_name,
+            branch: r.branch_location,
+            role: r.role,
+          }))
+        : [
+            companyProfile,
+            ...rows.map(r => ({
+              id: r.id,
+              employeeId: r.employee_id,
+              fullName: r.full_name,
+              branch: r.branch_location,
+              role: r.role,
+            })),
+          ];
+
+      return res.status(200).json({
+        success: true,
+        staff: staffList,
+      });
+    } catch (err) {
+      next(err);
+    }
 }
 
 async function updateCustomerProfile(req, res, next) {
