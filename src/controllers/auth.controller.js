@@ -862,7 +862,7 @@ async function getStaffDirectory(req, res, next) {
         id: 0,
         employeeId: 'LP-COMPANY',
         fullName: 'Lena Promoters (Company Direct)',
-        branch: 'Head Office - Chennai',
+        branch: 'Karaikudi – Head Office',
         role: 'ADMIN',
       };
 
