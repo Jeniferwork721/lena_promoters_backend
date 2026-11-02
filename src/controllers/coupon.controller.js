@@ -109,16 +109,16 @@ async function customerApply(req, res, next) {
       ? referredBy.trim()
       : 'Lena Promoters (Company Direct)';
 
-    // Payment validation: either UPI Transaction ID OR screenshot is required
-    const cleanTransId = (paymentTransId || '').trim();
+    // Payment screenshot is strictly mandatory for verification
     const hasScreenshot = Boolean(paymentScreenshotName || paymentScreenshotUrl);
-    if (!cleanTransId && !hasScreenshot) {
+    if (!hasScreenshot) {
       return res.status(400).json({
         success: false,
-        message: 'Payment proof is required. Please provide UPI Transaction ID or upload receipt screenshot.',
+        message: 'Payment screenshot receipt is mandatory. Please upload payment receipt screenshot.',
       });
     }
-    const finalTransId = cleanTransId || (hasScreenshot ? 'UPI_RECEIPT_ATTACHED' : null);
+    const cleanTransId = (paymentTransId || '').trim();
+    const finalTransId = cleanTransId || 'UPI_RECEIPT_ATTACHED';
 
     // Parse requested coupon quantity (Offer: Buy 10 coupons -> 1 FREE coupon)
     const quantity = Math.max(1, parseInt(req.body.quantity, 10) || 1);
