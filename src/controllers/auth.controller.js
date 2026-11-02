@@ -626,6 +626,18 @@ async function loginCustomerWithOtp(req, res, next) {
         fullName: customer.full_name,
         phoneNumber: customer.phone_number,
         email: customer.email || '',
+        address: customer.address || '',
+        dateOfBirth: customer.date_of_birth || '',
+        street: customer.street || '',
+        landmark: customer.landmark || '',
+        city: customer.city || '',
+        pincode: customer.pincode || '',
+        aadharNumber: customer.aadhar_number || '',
+        panNumber: customer.pan_number || '',
+        nomineeName: customer.nominee_name || '',
+        dreamLandSize: customer.dream_land_size || '',
+        occupation: customer.occupation || '',
+        profilePic: customer.profile_pic || '',
       },
     });
   } catch (err) {
@@ -865,7 +877,23 @@ async function getStaffDirectory(req, res, next) {
 
 async function updateCustomerProfile(req, res, next) {
   try {
-    const { phoneNumber, fullName, email, address, dateOfBirth } = req.body;
+    const {
+      phoneNumber,
+      fullName,
+      email,
+      address,
+      dateOfBirth,
+      street,
+      landmark,
+      city,
+      pincode,
+      aadharNumber,
+      panNumber,
+      nomineeName,
+      dreamLandSize,
+      occupation,
+      profilePic,
+    } = req.body;
     if (!phoneNumber) {
       return res.status(400).json({ success: false, message: 'Phone number is required to update profile' });
     }
@@ -902,15 +930,58 @@ async function updateCustomerProfile(req, res, next) {
          full_name = COALESCE(?, full_name),
          email = COALESCE(?, email),
          address = COALESCE(?, address),
-         date_of_birth = COALESCE(?, date_of_birth)
+         date_of_birth = COALESCE(?, date_of_birth),
+         street = COALESCE(?, street),
+         landmark = COALESCE(?, landmark),
+         city = COALESCE(?, city),
+         pincode = COALESCE(?, pincode),
+         aadhar_number = COALESCE(?, aadhar_number),
+         pan_number = COALESCE(?, pan_number),
+         nominee_name = COALESCE(?, nominee_name),
+         dream_land_size = COALESCE(?, dream_land_size),
+         occupation = COALESCE(?, occupation),
+         profile_pic = COALESCE(?, profile_pic)
        WHERE id = ?`,
-      [fullName?.trim() || null, email?.trim() || null, address?.trim() || null, dateOfBirth || null, customerId]
+      [
+        fullName?.trim() || null,
+        email?.trim() || null,
+        address?.trim() || null,
+        dateOfBirth || null,
+        street?.trim() || null,
+        landmark?.trim() || null,
+        city?.trim() || null,
+        pincode?.trim() || null,
+        aadharNumber?.trim() || null,
+        panNumber?.trim() || null,
+        nomineeName?.trim() || null,
+        dreamLandSize?.trim() || null,
+        occupation?.trim() || null,
+        profilePic?.trim() || null,
+        customerId,
+      ]
     );
 
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully!',
-      customer: { id: customerId, fullName, phoneNumber: last10, email, address, dateOfBirth },
+      customer: {
+        id: customerId,
+        fullName,
+        phoneNumber: last10,
+        email,
+        address,
+        dateOfBirth,
+        street,
+        landmark,
+        city,
+        pincode,
+        aadharNumber,
+        panNumber,
+        nomineeName,
+        dreamLandSize,
+        occupation,
+        profilePic,
+      },
     });
   } catch (err) {
     next(err);

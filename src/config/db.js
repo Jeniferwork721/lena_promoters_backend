@@ -196,6 +196,26 @@ async function initializeDatabase() {
         await connection.query('ALTER TABLE `lucky_draw_coupons` ADD COLUMN `applicant_phone` VARCHAR(25) NULL AFTER `referred_by`');
       }
 
+      // Extended customer profile KYC & preferences columns
+      const extendedCols = [
+        { name: 'street', type: 'TEXT NULL' },
+        { name: 'landmark', type: 'VARCHAR(255) NULL' },
+        { name: 'city', type: 'VARCHAR(100) NULL' },
+        { name: 'pincode', type: 'VARCHAR(20) NULL' },
+        { name: 'aadhar_number', type: 'VARCHAR(30) NULL' },
+        { name: 'pan_number', type: 'VARCHAR(30) NULL' },
+        { name: 'nominee_name', type: 'VARCHAR(150) NULL' },
+        { name: 'dream_land_size', type: 'VARCHAR(100) NULL' },
+        { name: 'occupation', type: 'VARCHAR(100) NULL' },
+        { name: 'profile_pic', type: 'TEXT NULL' },
+      ];
+      for (const col of extendedCols) {
+        const [exists] = await connection.query(`SHOW COLUMNS FROM \`customers\` LIKE "${col.name}"`);
+        if (exists.length === 0) {
+          await connection.query(`ALTER TABLE \`customers\` ADD COLUMN \`${col.name}\` ${col.type}`);
+        }
+      }
+
       // Enforce unique constraints on customer phone & email
       try {
         await connection.query('ALTER TABLE `customers` ADD UNIQUE INDEX `uniq_cust_email` (`email`)');
