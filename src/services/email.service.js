@@ -98,7 +98,7 @@ async function sendEmailOtp(toEmail, otp, purpose = 'STAFF_LOGIN') {
         </div>
         <div class="footer">
           &copy; ${new Date().getFullYear()} Lena Promoters Pvt Ltd. All rights reserved.<br>
-          Chennai &bull; Coimbatore &bull; Tamil Nadu
+          Karaikudi &bull; Sivagangai &bull; Coimbatore &bull; Tamil Nadu
         </div>
       </div>
     </body>
