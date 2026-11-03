@@ -2,24 +2,64 @@ const { pool } = require('../config/db');
 
 /**
  * 1. Book Free Site Visit (Customer)
+ * Requires customerName, phoneNumber, address, visitDate
  */
 async function bookSiteVisit(req, res, next) {
   try {
-    const {
-      propertyId,
-      propertyTitle,
-      customerName,
-      phoneNumber,
-      visitDate,
-      timeSlot,
-      pickupRequired = false,
-      pickupAddress,
-    } = req.body;
+    const propertyId = req.body.propertyId || req.body.property_id || null;
+    const propertyTitle = req.body.propertyTitle || req.body.property_title || 'Plotted Development';
+    const customerName = req.body.customerName || req.body.customer_name || req.body.name;
+    const phoneNumber = req.body.phoneNumber || req.body.phone_number || req.body.phone || req.body.contact;
+    const address = req.body.address || req.body.pickupAddress || req.body.pickup_address;
+    const visitDateRaw = req.body.visitDate || req.body.visit_date || req.body.date;
+    const timeSlot = req.body.timeSlot || req.body.time_slot || req.body.slot || 'Morning (10:00 AM - 1:00 PM)';
+    const pickupRequired = req.body.pickupRequired !== undefined
+      ? (req.body.pickupRequired === true || req.body.pickupRequired === 'true' || req.body.pickupRequired === 1 || req.body.pickupRequired === '1')
+      : true;
 
-    if (!propertyTitle || !customerName || !phoneNumber || !visitDate || !timeSlot) {
+    if (!customerName || !customerName.trim()) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide property title, customer name, phone number, visit date, and time slot.',
+        message: 'Please provide customer name.',
+      });
+    }
+
+    if (!phoneNumber || !phoneNumber.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide contact phone number.',
+      });
+    }
+
+    if (!address || !address.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide customer address for site visit coordination / cab pickup.',
+      });
+    }
+
+    if (!visitDateRaw) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please select a visit date.',
+      });
+    }
+
+    // Format visitDate to YYYY-MM-DD for MySQL DATE column
+    let visitDate = null;
+    if (typeof visitDateRaw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(visitDateRaw.trim())) {
+      visitDate = visitDateRaw.trim();
+    } else {
+      const d = new Date(visitDateRaw);
+      if (!isNaN(d.getTime())) {
+        visitDate = d.toISOString().split('T')[0];
+      }
+    }
+
+    if (!visitDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid visit date format. Please provide a valid date (YYYY-MM-DD).',
       });
     }
 
@@ -28,6 +68,7 @@ async function bookSiteVisit(req, res, next) {
       { driver: 'Murugan S (Cab allocated)', vehicle: 'TN 09 BX 4412' },
       { driver: 'Ramesh K (Dedicated AC Car)', vehicle: 'TN 22 CZ 7890' },
       { driver: 'Senthil Nathan (Site Coordinator)', vehicle: 'TN 11 DA 5612' },
+      { driver: 'Karthik Raja (Site Executive)', vehicle: 'TN 63 AA 2026' },
     ];
     const assigned = defaultDrivers[Math.floor(Math.random() * defaultDrivers.length)];
 
@@ -36,14 +77,14 @@ async function bookSiteVisit(req, res, next) {
         (property_id, property_title, customer_name, phone_number, visit_date, time_slot, pickup_required, pickup_address, driver_name, vehicle_no, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SCHEDULED')`,
       [
-        propertyId || null,
+        propertyId,
         propertyTitle,
         customerName.trim(),
         phoneNumber.trim(),
         visitDate,
         timeSlot,
         pickupRequired ? 1 : 0,
-        pickupAddress || null,
+        address.trim(),
         assigned.driver,
         assigned.vehicle,
       ]
@@ -54,13 +95,15 @@ async function bookSiteVisit(req, res, next) {
       message: 'Site visit scheduled successfully. Our coordinator will contact you.',
       siteVisit: {
         id: result.insertId,
+        propertyId,
         propertyTitle,
-        customerName,
-        phoneNumber,
+        customerName: customerName.trim(),
+        phoneNumber: phoneNumber.trim(),
+        address: address.trim(),
+        pickupAddress: address.trim(),
         visitDate,
         timeSlot,
         pickupRequired: Boolean(pickupRequired),
-        pickupAddress,
         driverName: assigned.driver,
         vehicleNo: assigned.vehicle,
         status: 'SCHEDULED',
