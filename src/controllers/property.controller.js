@@ -3,7 +3,7 @@ const { pool } = require('../config/db');
 /**
  * Helper to safely extract image list for a property
  */
-function resolvePropertyImages(plot, baseUrl) {
+function resolvePropertyImages(plot) {
   let list = [];
   if (plot.images) {
     try {
@@ -226,7 +226,7 @@ async function createProperty(req, res, next) {
 
     const propertyId = id || `lp-${Date.now().toString().slice(-4)}`;
 
-    // Parse amenities
+    // Parse amenities safely as JSON string
     let parsedAmenities = [];
     if (amenities) {
       if (Array.isArray(amenities)) {
@@ -384,8 +384,8 @@ async function updateProperty(req, res, next) {
 
     const primaryImagePath = finalImages[0];
 
-    // Amenities
-    let updatedAmenities = current.amenities;
+    // Amenities: Ensure it is ALWAYS encoded as a JSON string to avoid SQL array-expansion syntax errors
+    let updatedAmenitiesJson = null;
     if (amenities !== undefined) {
       let parsed = [];
       if (Array.isArray(amenities)) {
@@ -397,12 +397,18 @@ async function updateProperty(req, res, next) {
           parsed = amenities.split(',').map(s => s.trim()).filter(Boolean);
         }
       }
-      updatedAmenities = JSON.stringify(parsed);
+      updatedAmenitiesJson = JSON.stringify(parsed);
+    } else if (current.amenities) {
+      updatedAmenitiesJson = typeof current.amenities === 'string'
+        ? current.amenities
+        : JSON.stringify(current.amenities);
+    } else {
+      updatedAmenitiesJson = JSON.stringify(['40ft Road', 'Sweet Water', 'Clear Parent Deeds']);
     }
 
     const updatedFeatured = isFeatured !== undefined
       ? (isFeatured === true || isFeatured === 'true' || isFeatured === '1' || isFeatured === 1 ? 1 : 0)
-      : current.is_featured;
+      : (current.is_featured ? 1 : 0);
 
     await pool.query(
       `UPDATE properties SET
@@ -432,7 +438,7 @@ async function updateProperty(req, res, next) {
         category ?? current.category,
         primaryImagePath,
         JSON.stringify(finalImages),
-        updatedAmenities,
+        updatedAmenitiesJson,
         updatedFeatured,
         id,
       ]
@@ -451,7 +457,7 @@ async function updateProperty(req, res, next) {
       category: category ?? current.category,
       imagePath: primaryImagePath,
       images: finalImages,
-      amenities: typeof updatedAmenities === 'string' ? JSON.parse(updatedAmenities || '[]') : updatedAmenities,
+      amenities: typeof updatedAmenitiesJson === 'string' ? JSON.parse(updatedAmenitiesJson || '[]') : updatedAmenitiesJson,
       isFeatured: Boolean(updatedFeatured),
     };
 
@@ -467,7 +473,89 @@ async function updateProperty(req, res, next) {
 }
 
 /**
- * 5. Delete Property
+ * 5. Bulk Update Property Images
+ * Supports updating multiple lands in one request:
+ * Body: [{ id: "lp-01", images: ["url1", "url2"] }, ...]
+ * Or: { "lp-01": ["url1", "url2"], "lp-02": [...] }
+ */
+async function bulkUpdateImages(req, res, next) {
+  try {
+    let items = [];
+
+    if (Array.isArray(req.body)) {
+      items = req.body;
+    } else if (req.body && typeof req.body === 'object') {
+      if (Array.isArray(req.body.properties)) {
+        items = req.body.properties;
+      } else if (Array.isArray(req.body.data)) {
+        items = req.body.data;
+      } else {
+        items = Object.keys(req.body).map(id => ({
+          id,
+          images: req.body[id],
+        }));
+      }
+    }
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of properties with id and images.',
+      });
+    }
+
+    let updatedCount = 0;
+    const errors = [];
+
+    for (const item of items) {
+      if (!item.id) continue;
+
+      let imagesList = [];
+      if (Array.isArray(item.images)) {
+        imagesList = item.images;
+      } else if (typeof item.images === 'string') {
+        try {
+          const parsed = JSON.parse(item.images);
+          if (Array.isArray(parsed)) imagesList = parsed;
+          else imagesList = [item.images];
+        } catch (_) {
+          imagesList = [item.images];
+        }
+      } else if (item.imagePath) {
+        imagesList = [item.imagePath];
+      }
+
+      if (imagesList.length === 0) continue;
+
+      const primaryCover = imagesList[0];
+      const imagesJson = JSON.stringify(imagesList);
+
+      try {
+        const [result] = await pool.query(
+          'UPDATE properties SET image_path = ?, images = ? WHERE id = ?',
+          [primaryCover, imagesJson, item.id]
+        );
+        if (result.affectedRows > 0) {
+          updatedCount++;
+        }
+      } catch (err) {
+        errors.push({ id: item.id, error: err.message });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Bulk updated images for ${updatedCount} land(s)`,
+      updatedCount,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 6. Delete Property
  */
 async function deleteProperty(req, res, next) {
   try {
@@ -488,7 +576,7 @@ async function deleteProperty(req, res, next) {
 }
 
 /**
- * 6. Get Available Cities
+ * 7. Get Available Cities
  */
 async function getCities(req, res, next) {
   try {
@@ -508,6 +596,7 @@ module.exports = {
   getPropertyById,
   createProperty,
   updateProperty,
+  bulkUpdateImages,
   deleteProperty,
   getCities,
 };

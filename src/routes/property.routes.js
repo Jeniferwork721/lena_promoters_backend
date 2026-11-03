@@ -7,6 +7,11 @@ const { verifyStaffToken, requireAdminRole } = require('../middlewares/auth.midd
 // Public plot browsing
 router.get('/', propertyController.getAllProperties);
 router.get('/cities', propertyController.getCities);
+
+// Bulk update land images (MUST be defined before /:id)
+router.put('/bulk-images', verifyStaffToken, propertyController.bulkUpdateImages);
+router.post('/bulk-images', verifyStaffToken, propertyController.bulkUpdateImages);
+
 router.get('/:id', propertyController.getPropertyById);
 
 // Staff / Admin plot management (POST, PUT, DELETE)
