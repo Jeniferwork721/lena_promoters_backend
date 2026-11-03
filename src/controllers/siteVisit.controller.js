@@ -2,7 +2,9 @@ const { pool } = require('../config/db');
 
 /**
  * 1. Book Free Site Visit (Customer)
- * Requires customerName, phoneNumber, address, visitDate
+ * Requires customerName, phoneNumber, address, visitDate.
+ * Supports optional staff referral name (defaults to 'Direct Company Referral').
+ * No fake driver names or dumped placeholder vehicles.
  */
 async function bookSiteVisit(req, res, next) {
   try {
@@ -16,6 +18,12 @@ async function bookSiteVisit(req, res, next) {
     const pickupRequired = req.body.pickupRequired !== undefined
       ? (req.body.pickupRequired === true || req.body.pickupRequired === 'true' || req.body.pickupRequired === 1 || req.body.pickupRequired === '1')
       : true;
+
+    // Optional staff referral name, defaults to 'Direct Company Referral'
+    const referredByRaw = req.body.referredBy || req.body.referred_by || req.body.staffName || req.body.staff_name;
+    const referredBy = (referredByRaw && referredByRaw.trim().length > 0)
+      ? referredByRaw.trim()
+      : 'Direct Company Referral';
 
     if (!customerName || !customerName.trim()) {
       return res.status(400).json({
@@ -34,7 +42,7 @@ async function bookSiteVisit(req, res, next) {
     if (!address || !address.trim()) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide customer address for site visit coordination / cab pickup.',
+        message: 'Please provide customer address for site visit registration.',
       });
     }
 
@@ -63,19 +71,10 @@ async function bookSiteVisit(req, res, next) {
       });
     }
 
-    // Default assigned driver pool for demo/production experience
-    const defaultDrivers = [
-      { driver: 'Murugan S (Cab allocated)', vehicle: 'TN 09 BX 4412' },
-      { driver: 'Ramesh K (Dedicated AC Car)', vehicle: 'TN 22 CZ 7890' },
-      { driver: 'Senthil Nathan (Site Coordinator)', vehicle: 'TN 11 DA 5612' },
-      { driver: 'Karthik Raja (Site Executive)', vehicle: 'TN 63 AA 2026' },
-    ];
-    const assigned = defaultDrivers[Math.floor(Math.random() * defaultDrivers.length)];
-
     const [result] = await pool.query(
       `INSERT INTO site_visits 
-        (property_id, property_title, customer_name, phone_number, visit_date, time_slot, pickup_required, pickup_address, driver_name, vehicle_no, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SCHEDULED')`,
+        (property_id, property_title, customer_name, phone_number, visit_date, time_slot, pickup_required, pickup_address, referred_by, driver_name, vehicle_no, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'SCHEDULED')`,
       [
         propertyId,
         propertyTitle,
@@ -85,14 +84,13 @@ async function bookSiteVisit(req, res, next) {
         timeSlot,
         pickupRequired ? 1 : 0,
         address.trim(),
-        assigned.driver,
-        assigned.vehicle,
+        referredBy,
       ]
     );
 
     return res.status(201).json({
       success: true,
-      message: 'Site visit scheduled successfully. Our coordinator will contact you.',
+      message: 'Site visit booked! Our staff will contact you shortly.',
       siteVisit: {
         id: result.insertId,
         propertyId,
@@ -104,8 +102,9 @@ async function bookSiteVisit(req, res, next) {
         visitDate,
         timeSlot,
         pickupRequired: Boolean(pickupRequired),
-        driverName: assigned.driver,
-        vehicleNo: assigned.vehicle,
+        referredBy,
+        driverName: null,
+        vehicleNo: null,
         status: 'SCHEDULED',
       },
     });
@@ -148,6 +147,7 @@ async function getAllSiteVisits(req, res, next) {
       timeSlot: v.time_slot,
       pickupRequired: Boolean(v.pickup_required),
       pickupAddress: v.pickup_address,
+      referredBy: v.referred_by || 'Direct Company Referral',
       driverName: v.driver_name,
       vehicleNo: v.vehicle_no,
       status: v.status,
@@ -187,6 +187,7 @@ async function getVisitsByPhone(req, res, next) {
       timeSlot: v.time_slot,
       pickupRequired: Boolean(v.pickup_required),
       pickupAddress: v.pickup_address,
+      referredBy: v.referred_by || 'Direct Company Referral',
       driverName: v.driver_name,
       vehicleNo: v.vehicle_no,
       status: v.status,

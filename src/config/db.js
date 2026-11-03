@@ -177,6 +177,10 @@ async function initializeDatabase() {
 
     // Ensure address, date_of_birth, and referred_by columns exist on existing tables
     try {
+      const [refVisitCol] = await connection.query('SHOW COLUMNS FROM `site_visits` LIKE "referred_by"');
+      if (refVisitCol.length === 0) {
+        await connection.query('ALTER TABLE `site_visits` ADD COLUMN `referred_by` VARCHAR(150) DEFAULT "Direct Company Referral" AFTER `pickup_address`');
+      }
       const [addrCol] = await connection.query('SHOW COLUMNS FROM `customers` LIKE "address"');
       if (addrCol.length === 0) {
         await connection.query('ALTER TABLE `customers` ADD COLUMN `address` TEXT NULL AFTER `email`');
