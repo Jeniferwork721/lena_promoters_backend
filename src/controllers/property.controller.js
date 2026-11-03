@@ -1,6 +1,30 @@
 const { pool } = require('../config/db');
 
 /**
+ * Helper to safely extract image list for a property
+ */
+function resolvePropertyImages(plot, baseUrl) {
+  let list = [];
+  if (plot.images) {
+    try {
+      list = typeof plot.images === 'string' ? JSON.parse(plot.images) : plot.images;
+    } catch (_) {
+      list = [];
+    }
+  }
+
+  if (!Array.isArray(list) || list.length === 0) {
+    if (plot.image_path) {
+      list = [plot.image_path];
+    } else {
+      list = ['https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=800&q=80'];
+    }
+  }
+
+  return list;
+}
+
+/**
  * 1. Get All Properties (with filtering for search, city, and featured)
  */
 async function getAllProperties(req, res, next) {
@@ -30,22 +54,40 @@ async function getAllProperties(req, res, next) {
 
     const [rows] = await pool.query(query, params);
 
-    // Parse JSON amenities and map fields to match Flutter PlotModel
-    const properties = rows.map(plot => ({
-      id: plot.id,
-      title: plot.title,
-      location: plot.location,
-      city: plot.city,
-      priceStarting: plot.price_starting,
-      pricePerSqFt: plot.price_per_sqft,
-      plotSizes: plot.plot_sizes,
-      approval: plot.approval,
-      reraNumber: plot.rera_number,
-      category: plot.category,
-      imagePath: plot.image_path,
-      amenities: typeof plot.amenities === 'string' ? JSON.parse(plot.amenities || '[]') : (plot.amenities || []),
-      isFeatured: Boolean(plot.is_featured),
-    }));
+    // Map fields to match Flutter PlotModel with multi-image support
+    const properties = rows.map(plot => {
+      const imagesList = resolvePropertyImages(plot);
+      const primaryImage = imagesList[0] || plot.image_path;
+
+      let amenitiesList = [];
+      if (plot.amenities) {
+        try {
+          amenitiesList = typeof plot.amenities === 'string' ? JSON.parse(plot.amenities) : plot.amenities;
+        } catch (_) {
+          amenitiesList = [];
+        }
+      }
+      if (!Array.isArray(amenitiesList) || amenitiesList.length === 0) {
+        amenitiesList = ['40ft Road', 'Sweet Water', 'Clear Parent Deeds'];
+      }
+
+      return {
+        id: plot.id,
+        title: plot.title,
+        location: plot.location,
+        city: plot.city,
+        priceStarting: plot.price_starting,
+        pricePerSqFt: plot.price_per_sqft,
+        plotSizes: plot.plot_sizes,
+        approval: plot.approval,
+        reraNumber: plot.rera_number,
+        category: plot.category,
+        imagePath: primaryImage, // Primary portrait cover image
+        images: imagesList,      // Full list of portrait images (1, 2, 3+)
+        amenities: amenitiesList,
+        isFeatured: Boolean(plot.is_featured),
+      };
+    });
 
     return res.status(200).json({
       success: true,
@@ -73,6 +115,21 @@ async function getPropertyById(req, res, next) {
     }
 
     const plot = rows[0];
+    const imagesList = resolvePropertyImages(plot);
+    const primaryImage = imagesList[0] || plot.image_path;
+
+    let amenitiesList = [];
+    if (plot.amenities) {
+      try {
+        amenitiesList = typeof plot.amenities === 'string' ? JSON.parse(plot.amenities) : plot.amenities;
+      } catch (_) {
+        amenitiesList = [];
+      }
+    }
+    if (!Array.isArray(amenitiesList) || amenitiesList.length === 0) {
+      amenitiesList = ['40ft Road', 'Sweet Water', 'Clear Parent Deeds'];
+    }
+
     const property = {
       id: plot.id,
       title: plot.title,
@@ -84,8 +141,9 @@ async function getPropertyById(req, res, next) {
       approval: plot.approval,
       reraNumber: plot.rera_number,
       category: plot.category,
-      imagePath: plot.image_path,
-      amenities: typeof plot.amenities === 'string' ? JSON.parse(plot.amenities || '[]') : (plot.amenities || []),
+      imagePath: primaryImage,
+      images: imagesList,
+      amenities: amenitiesList,
       isFeatured: Boolean(plot.is_featured),
     };
 
@@ -99,7 +157,9 @@ async function getPropertyById(req, res, next) {
 }
 
 /**
- * 3. Create Property (Staff / Admin)
+ * 3. Create Property (Staff / Admin API)
+ * Supports multiple portrait image uploads (1, 2, 3+ images) via multipart/form-data ('images')
+ * or via JSON array ('images' / 'imagePath').
  */
 async function createProperty(req, res, next) {
   try {
@@ -114,38 +174,97 @@ async function createProperty(req, res, next) {
       approval,
       reraNumber,
       category = 'Villa Plots',
-      imagePath,
-      amenities = [],
+      amenities,
       isFeatured = false,
     } = req.body;
 
     if (!title || !location || !city || !priceStarting) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide required property title, location, city, and pricing.',
+        message: 'Please provide required property title, location, city, and priceStarting.',
       });
     }
 
+    const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const uploadedImages = [];
+
+    // Check for uploaded files from multipart/form-data
+    if (req.files) {
+      const filesList = [
+        ...(req.files['images'] || []),
+        ...(req.files['image'] || []),
+      ];
+      for (const file of filesList) {
+        uploadedImages.push(`${baseUrl}/uploads/properties/${file.filename}`);
+      }
+    } else if (req.file) {
+      uploadedImages.push(`${baseUrl}/uploads/properties/${req.file.filename}`);
+    }
+
+    // Check for image URLs passed in body
+    let bodyImages = [];
+    if (req.body.images) {
+      if (Array.isArray(req.body.images)) {
+        bodyImages = req.body.images;
+      } else if (typeof req.body.images === 'string') {
+        try {
+          const parsed = JSON.parse(req.body.images);
+          if (Array.isArray(parsed)) bodyImages = parsed;
+          else bodyImages = [req.body.images];
+        } catch (_) {
+          bodyImages = req.body.images.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+    } else if (req.body.imagePath) {
+      bodyImages = [req.body.imagePath];
+    }
+
+    const allImages = [...uploadedImages, ...bodyImages];
+    const defaultCover = 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=800&q=80';
+    const primaryImagePath = allImages.length > 0 ? allImages[0] : defaultCover;
+    const finalImages = allImages.length > 0 ? allImages : [primaryImagePath];
+
     const propertyId = id || `lp-${Date.now().toString().slice(-4)}`;
-    const amenitiesJson = JSON.stringify(Array.isArray(amenities) ? amenities : []);
+
+    // Parse amenities
+    let parsedAmenities = [];
+    if (amenities) {
+      if (Array.isArray(amenities)) {
+        parsedAmenities = amenities;
+      } else if (typeof amenities === 'string') {
+        try {
+          parsedAmenities = JSON.parse(amenities);
+        } catch (_) {
+          parsedAmenities = amenities.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+    }
+    if (!Array.isArray(parsedAmenities) || parsedAmenities.length === 0) {
+      parsedAmenities = ['40ft Road', 'Sweet Ground Water', 'Clear Parent Deeds'];
+    }
+
+    const amenitiesJson = JSON.stringify(parsedAmenities);
+    const imagesJson = JSON.stringify(finalImages);
+    const featuredFlag = isFeatured === true || isFeatured === 'true' || isFeatured === '1' || isFeatured === 1 ? 1 : 0;
 
     await pool.query(
-      `INSERT INTO properties (id, title, location, city, price_starting, price_per_sqft, plot_sizes, approval, rera_number, category, image_path, amenities, is_featured)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO properties (id, title, location, city, price_starting, price_per_sqft, plot_sizes, approval, rera_number, category, image_path, images, amenities, is_featured)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         propertyId,
         title,
         location,
         city,
         priceStarting,
-        pricePerSqFt || '',
-        plotSizes || '',
+        pricePerSqFt || priceStarting,
+        plotSizes || 'Plots Available',
         approval || 'DTCP & RERA Approved',
         reraNumber || '',
         category,
-        imagePath || 'https://images.unsplash.com/photo-1580587771525-78b9dba3b914',
+        primaryImagePath,
+        imagesJson,
         amenitiesJson,
-        isFeatured ? 1 : 0,
+        featuredFlag,
       ]
     );
 
@@ -160,14 +279,15 @@ async function createProperty(req, res, next) {
       approval: approval || 'DTCP & RERA Approved',
       reraNumber: reraNumber || '',
       category,
-      imagePath: imagePath || 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80',
-      amenities: Array.isArray(amenities) ? amenities : ['40ft Road', 'Sweet Ground Water', 'Clear Parent Deeds'],
-      isFeatured: Boolean(isFeatured),
+      imagePath: primaryImagePath,
+      images: finalImages,
+      amenities: parsedAmenities,
+      isFeatured: Boolean(featuredFlag),
     };
 
     return res.status(201).json({
       success: true,
-      message: 'Property listing created successfully',
+      message: `Land listing posted successfully with ${finalImages.length} portrait image(s)`,
       propertyId,
       property: createdProperty,
       data: createdProperty,
@@ -178,7 +298,8 @@ async function createProperty(req, res, next) {
 }
 
 /**
- * 4. Update Property
+ * 4. Update Property (Staff / Admin API)
+ * Supports updating fields and uploading new portrait images, retaining or replacing existing ones.
  */
 async function updateProperty(req, res, next) {
   try {
@@ -193,9 +314,9 @@ async function updateProperty(req, res, next) {
       approval,
       reraNumber,
       category,
-      imagePath,
       amenities,
       isFeatured,
+      keepExistingImages = true,
     } = req.body;
 
     const [existing] = await pool.query('SELECT * FROM properties WHERE id = ?', [id]);
@@ -204,7 +325,84 @@ async function updateProperty(req, res, next) {
     }
 
     const current = existing[0];
-    const updatedAmenities = amenities !== undefined ? JSON.stringify(amenities) : current.amenities;
+    const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+
+    // Handle new uploaded files from multipart/form-data
+    const newUploadedImages = [];
+    if (req.files) {
+      const filesList = [
+        ...(req.files['images'] || []),
+        ...(req.files['image'] || []),
+      ];
+      for (const file of filesList) {
+        newUploadedImages.push(`${baseUrl}/uploads/properties/${file.filename}`);
+      }
+    } else if (req.file) {
+      newUploadedImages.push(`${baseUrl}/uploads/properties/${req.file.filename}`);
+    }
+
+    // Current images in database
+    let currentImages = resolvePropertyImages(current);
+
+    // If caller specified specific existing images to retain
+    let retainedImages = currentImages;
+    if (req.body.existingImages !== undefined) {
+      if (Array.isArray(req.body.existingImages)) {
+        retainedImages = req.body.existingImages;
+      } else if (typeof req.body.existingImages === 'string') {
+        try {
+          retainedImages = JSON.parse(req.body.existingImages);
+        } catch (_) {
+          retainedImages = req.body.existingImages.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+    } else if (keepExistingImages === false || keepExistingImages === 'false') {
+      retainedImages = [];
+    }
+
+    // Combine retained + newly uploaded
+    let finalImages = [...retainedImages, ...newUploadedImages];
+
+    // If caller directly provided images URL array in JSON/body and no new files were uploaded
+    if (req.body.images && newUploadedImages.length === 0) {
+      if (Array.isArray(req.body.images)) {
+        finalImages = req.body.images;
+      } else if (typeof req.body.images === 'string') {
+        try {
+          finalImages = JSON.parse(req.body.images);
+        } catch (_) {
+          finalImages = req.body.images.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+    } else if (req.body.imagePath && finalImages.length === 0) {
+      finalImages = [req.body.imagePath];
+    }
+
+    if (finalImages.length === 0) {
+      finalImages = [current.image_path || 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=800&q=80'];
+    }
+
+    const primaryImagePath = finalImages[0];
+
+    // Amenities
+    let updatedAmenities = current.amenities;
+    if (amenities !== undefined) {
+      let parsed = [];
+      if (Array.isArray(amenities)) {
+        parsed = amenities;
+      } else if (typeof amenities === 'string') {
+        try {
+          parsed = JSON.parse(amenities);
+        } catch (_) {
+          parsed = amenities.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+      updatedAmenities = JSON.stringify(parsed);
+    }
+
+    const updatedFeatured = isFeatured !== undefined
+      ? (isFeatured === true || isFeatured === 'true' || isFeatured === '1' || isFeatured === 1 ? 1 : 0)
+      : current.is_featured;
 
     await pool.query(
       `UPDATE properties SET
@@ -218,6 +416,7 @@ async function updateProperty(req, res, next) {
         rera_number = ?,
         category = ?,
         image_path = ?,
+        images = ?,
         amenities = ?,
         is_featured = ?
        WHERE id = ?`,
@@ -231,9 +430,10 @@ async function updateProperty(req, res, next) {
         approval ?? current.approval,
         reraNumber ?? current.rera_number,
         category ?? current.category,
-        imagePath ?? current.image_path,
+        primaryImagePath,
+        JSON.stringify(finalImages),
         updatedAmenities,
-        isFeatured !== undefined ? (isFeatured ? 1 : 0) : current.is_featured,
+        updatedFeatured,
         id,
       ]
     );
@@ -249,14 +449,15 @@ async function updateProperty(req, res, next) {
       approval: approval ?? current.approval,
       reraNumber: reraNumber ?? current.rera_number,
       category: category ?? current.category,
-      imagePath: imagePath ?? current.image_path,
-      amenities: amenities !== undefined ? (Array.isArray(amenities) ? amenities : []) : (typeof current.amenities === 'string' ? JSON.parse(current.amenities || '[]') : (current.amenities || [])),
-      isFeatured: isFeatured !== undefined ? Boolean(isFeatured) : Boolean(current.is_featured),
+      imagePath: primaryImagePath,
+      images: finalImages,
+      amenities: typeof updatedAmenities === 'string' ? JSON.parse(updatedAmenities || '[]') : updatedAmenities,
+      isFeatured: Boolean(updatedFeatured),
     };
 
     return res.status(200).json({
       success: true,
-      message: 'Property updated successfully',
+      message: `Land listing updated successfully with ${finalImages.length} portrait image(s)`,
       property: updated,
       data: updated,
     });

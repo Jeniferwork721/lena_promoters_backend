@@ -83,12 +83,18 @@ async function initializeDatabase() {
         \`rera_number\` VARCHAR(150) NOT NULL,
         \`category\` VARCHAR(100) NOT NULL DEFAULT 'Villa Plots',
         \`image_path\` TEXT NOT NULL,
+        \`images\` JSON NULL,
         \`amenities\` JSON NULL,
         \`is_featured\` TINYINT(1) NOT NULL DEFAULT 0,
         \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    // 3b. Ensure images column exists for multiple portrait photos
+    try {
+      await connection.query('ALTER TABLE \`properties\` ADD COLUMN \`images\` JSON NULL AFTER \`image_path\`;');
+    } catch (_) {}
 
     // 4. Lucky Draw Schemes Table
     await connection.query(`

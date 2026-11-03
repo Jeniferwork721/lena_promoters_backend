@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS `properties` (
   `rera_number` VARCHAR(150) NOT NULL,
   `category` VARCHAR(100) NOT NULL DEFAULT 'Villa Plots',
   `image_path` TEXT NOT NULL,
+  `images` JSON NULL,
   `amenities` JSON NULL,
   `is_featured` TINYINT(1) NOT NULL DEFAULT 0,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
