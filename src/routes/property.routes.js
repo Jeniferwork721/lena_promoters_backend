@@ -15,24 +15,18 @@ router.post('/bulk-images', verifyStaffToken, propertyController.bulkUpdateImage
 router.get('/:id', propertyController.getPropertyById);
 
 // Staff / Admin plot management (POST, PUT, DELETE)
-// Supports multipart/form-data with multiple portrait images (field: 'images' or 'image') or JSON body
+// Supports multipart/form-data with multiple portrait images (any field name: 'images', 'image', 'Images') or JSON body
 router.post(
   '/',
   verifyStaffToken,
-  upload.fields([
-    { name: 'images', maxCount: 10 },
-    { name: 'image', maxCount: 1 },
-  ]),
+  upload.any(),
   propertyController.createProperty
 );
 
 router.put(
   '/:id',
   verifyStaffToken,
-  upload.fields([
-    { name: 'images', maxCount: 10 },
-    { name: 'image', maxCount: 1 },
-  ]),
+  upload.any(),
   propertyController.updateProperty
 );
 

@@ -189,13 +189,16 @@ async function createProperty(req, res, next) {
     const uploadedImages = [];
 
     // Check for uploaded files from multipart/form-data
-    if (req.files) {
-      const filesList = [
-        ...(req.files['images'] || []),
-        ...(req.files['image'] || []),
-      ];
-      for (const file of filesList) {
+    if (Array.isArray(req.files)) {
+      for (const file of req.files) {
         uploadedImages.push(`${baseUrl}/uploads/properties/${file.filename}`);
+      }
+    } else if (req.files) {
+      const allFiles = Object.values(req.files).flat();
+      for (const file of allFiles) {
+        if (file && file.filename) {
+          uploadedImages.push(`${baseUrl}/uploads/properties/${file.filename}`);
+        }
       }
     } else if (req.file) {
       uploadedImages.push(`${baseUrl}/uploads/properties/${req.file.filename}`);
@@ -327,15 +330,31 @@ async function updateProperty(req, res, next) {
     const current = existing[0];
     const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
 
+    // Support keepexisting, keepExistingImages, keep_existing_images (case-insensitive)
+    let shouldKeepExisting = true;
+    for (const key of Object.keys(req.body)) {
+      const cleanKey = key.toLowerCase().replace(/[^a-z]/g, '');
+      if (cleanKey === 'keepexisting' || cleanKey === 'keepexistingimages') {
+        const val = req.body[key];
+        if (val === false || val === 'false' || val === 0 || val === '0') {
+          shouldKeepExisting = false;
+        }
+        break;
+      }
+    }
+
     // Handle new uploaded files from multipart/form-data
     const newUploadedImages = [];
-    if (req.files) {
-      const filesList = [
-        ...(req.files['images'] || []),
-        ...(req.files['image'] || []),
-      ];
-      for (const file of filesList) {
+    if (Array.isArray(req.files)) {
+      for (const file of req.files) {
         newUploadedImages.push(`${baseUrl}/uploads/properties/${file.filename}`);
+      }
+    } else if (req.files) {
+      const allFiles = Object.values(req.files).flat();
+      for (const file of allFiles) {
+        if (file && file.filename) {
+          newUploadedImages.push(`${baseUrl}/uploads/properties/${file.filename}`);
+        }
       }
     } else if (req.file) {
       newUploadedImages.push(`${baseUrl}/uploads/properties/${req.file.filename}`);
@@ -345,7 +364,7 @@ async function updateProperty(req, res, next) {
     let currentImages = resolvePropertyImages(current);
 
     // If caller specified specific existing images to retain
-    let retainedImages = currentImages;
+    let retainedImages = shouldKeepExisting ? currentImages : [];
     if (req.body.existingImages !== undefined) {
       if (Array.isArray(req.body.existingImages)) {
         retainedImages = req.body.existingImages;
@@ -356,8 +375,6 @@ async function updateProperty(req, res, next) {
           retainedImages = req.body.existingImages.split(',').map(s => s.trim()).filter(Boolean);
         }
       }
-    } else if (keepExistingImages === false || keepExistingImages === 'false') {
-      retainedImages = [];
     }
 
     // Combine retained + newly uploaded
@@ -384,27 +401,23 @@ async function updateProperty(req, res, next) {
 
     const primaryImagePath = finalImages[0];
 
-    // Amenities: Ensure it is ALWAYS encoded as a JSON string to avoid SQL array-expansion syntax errors
-    let updatedAmenitiesJson = null;
-    if (amenities !== undefined) {
-      let parsed = [];
-      if (Array.isArray(amenities)) {
-        parsed = amenities;
-      } else if (typeof amenities === 'string') {
-        try {
-          parsed = JSON.parse(amenities);
-        } catch (_) {
-          parsed = amenities.split(',').map(s => s.trim()).filter(Boolean);
-        }
+    // Amenities: ALWAYS parse into JS array first, then JSON.stringify to prevent SQL array expansion syntax error
+    let finalAmenitiesArr = [];
+    const sourceAmenities = amenities !== undefined ? amenities : current.amenities;
+    if (Array.isArray(sourceAmenities)) {
+      finalAmenitiesArr = sourceAmenities;
+    } else if (typeof sourceAmenities === 'string') {
+      try {
+        const parsed = JSON.parse(sourceAmenities);
+        finalAmenitiesArr = Array.isArray(parsed) ? parsed : [parsed];
+      } catch (_) {
+        finalAmenitiesArr = sourceAmenities.split(',').map(s => s.trim()).filter(Boolean);
       }
-      updatedAmenitiesJson = JSON.stringify(parsed);
-    } else if (current.amenities) {
-      updatedAmenitiesJson = typeof current.amenities === 'string'
-        ? current.amenities
-        : JSON.stringify(current.amenities);
-    } else {
-      updatedAmenitiesJson = JSON.stringify(['40ft Road', 'Sweet Water', 'Clear Parent Deeds']);
     }
+    if (!Array.isArray(finalAmenitiesArr) || finalAmenitiesArr.length === 0) {
+      finalAmenitiesArr = ['40ft Road', 'Sweet Ground Water', 'Clear Parent Deeds'];
+    }
+    const updatedAmenitiesJson = JSON.stringify(finalAmenitiesArr);
 
     const updatedFeatured = isFeatured !== undefined
       ? (isFeatured === true || isFeatured === 'true' || isFeatured === '1' || isFeatured === 1 ? 1 : 0)
