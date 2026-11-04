@@ -1336,7 +1336,7 @@ async function getCustomerProfile(req, res, next) {
  */
 async function updateStaffProfile(req, res, next) {
   try {
-    const { employeeId, id, fullName, email, phone, branch, branchLocation } = req.body;
+    const { employeeId, id, fullName, email, phone, branch, branchLocation, role } = req.body;
     const staffLookupId = id || req.staff?.id;
     const staffLookupEmpId = employeeId || req.staff?.employeeId;
 
@@ -1378,7 +1378,6 @@ async function updateStaffProfile(req, res, next) {
       }
     }
 
-    const { fullName, email, branchLocation, branch, role } = req.body;
     const finalName = fullName ? fullName.trim() : currentStaff.full_name;
     const finalBranch = (branchLocation || branch || '').trim() || currentStaff.branch_location;
     const finalRole = role ? role.trim().toUpperCase() : currentStaff.role;
