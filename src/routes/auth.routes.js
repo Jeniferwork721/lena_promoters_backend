@@ -4,12 +4,18 @@ const authController = require('../controllers/auth.controller');
 const branchController = require('../controllers/branch.controller');
 const { verifyStaffToken } = require('../middlewares/auth.middleware');
 
-// Public routes for staff login & OTP
+// Public routes for staff login & registration
 router.post('/staff/login', authController.loginWithPassword);
+router.post('/staff/register', authController.registerEmployee);
+router.post('/staff/register-password', authController.registerEmployee);
+router.post('/staff/create-password-with-otp', authController.registerEmployee);
 router.post('/staff/send-otp', authController.sendOtp);
 router.post('/staff/verify-otp-login', authController.loginWithOtp);
-router.post('/staff/register-password', authController.registerPasswordWithOtp);
-router.post('/staff/create-password-with-otp', authController.registerPasswordWithOtp);
+
+// Public routes for staff password recovery (Forgot Password)
+router.post('/staff/forgot-password', authController.forgotPassword);
+router.post('/staff/verify-reset-otp', authController.verifyResetOtp);
+router.post('/staff/reset-password', authController.resetPassword);
 router.get('/staff-directory', authController.getStaffDirectory);
 router.get('/branches', branchController.getBranches);
 

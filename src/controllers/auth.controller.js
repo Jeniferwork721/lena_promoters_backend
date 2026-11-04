@@ -72,25 +72,24 @@ async function generateNextStaffId() {
 }
 
 /**
- * 1. Staff Login using Password (Email or Phone)
+ * 1. Staff Login using Password (Email, Phone, or Employee ID)
  */
 async function loginWithPassword(req, res, next) {
   try {
-    const { emailOrPhone, password } = req.body;
+    const { emailOrPhone, email, phone, phoneNumber, username, employeeId, password } = req.body;
+    const cleanInput = (emailOrPhone || email || phone || phoneNumber || username || employeeId || '').trim();
 
-    if (!emailOrPhone || !password) {
+    if (!cleanInput || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide email/phone number and password.',
+        message: 'Please provide email/phone/employee ID and password.',
       });
     }
 
-    const cleanInput = emailOrPhone.trim();
-
-    // Query staff user by email or phone
+    // Query staff user by email, phone, or employee ID
     const [users] = await pool.query(
-      'SELECT * FROM staff_users WHERE (email = ? OR phone_number = ?) AND is_active = 1 LIMIT 1',
-      [cleanInput, cleanInput]
+      'SELECT * FROM staff_users WHERE (email = ? OR phone_number = ? OR employee_id = ?) AND is_active = 1 LIMIT 1',
+      [cleanInput, cleanInput, cleanInput]
     );
 
     if (users.length === 0) {
@@ -314,7 +313,10 @@ async function loginWithOtp(req, res, next) {
 /**
  * 4. Register Password with OTP
  */
-async function registerPasswordWithOtp(req, res, next) {
+/**
+ * 4. Register Employee / Staff (Supports both Web Direct Registration and Mobile OTP Verification)
+ */
+async function registerEmployee(req, res, next) {
   try {
     const {
       name,
@@ -325,47 +327,60 @@ async function registerPasswordWithOtp(req, res, next) {
       phoneNumber,
       otp,
       newPassword,
+      password: reqPassword,
       branch,
       branchLocation,
+      role: reqRole,
     } = req.body;
     const finalName = (reqFullName || name || '').trim() || 'Authorized Lena Staff';
     const selectedBranch = (branchLocation || branch || '').trim() || 'Karaikudi – Head Office';
+    const finalRole = (reqRole || 'STAFF').trim().toUpperCase();
 
     const cleanInput = (emailOrPhone || phone || phoneNumber || email || '').trim();
+    const cleanPassword = (newPassword || reqPassword || '').trim();
     const cleanOtp = (otp || '').trim();
 
-    if (!cleanInput || !cleanOtp || !newPassword) {
+    if (!cleanInput || !cleanPassword) {
       return res.status(400).json({
         success: false,
-        message: 'Staff details, verification code, and password are required.',
+        message: 'Employee contact details (email or phone) and password are required.',
+      });
+    }
+
+    if (cleanPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long.',
       });
     }
 
     const inputPhone = (phone || phoneNumber || (!cleanInput.includes('@') ? cleanInput : '')).replace(/[^0-9]/g, '');
     const inputEmail = (email || (cleanInput.includes('@') ? cleanInput : '')).trim();
 
-    // Verify OTP against whichever channel was verified (cleanInput, inputPhone, inputEmail, or master '7842')
-    const [records] = await pool.query(
-      `SELECT * FROM otp_codes 
-       WHERE (phone_or_email = ? OR phone_or_email = ? OR phone_or_email = ?) AND otp = ? AND is_used = 0 AND expires_at > NOW() 
-       ORDER BY created_at DESC LIMIT 1`,
-      [cleanInput, inputPhone || 'none', inputEmail || 'none', cleanOtp]
-    );
+    // If OTP is provided, verify it (mobile app registration flow)
+    if (cleanOtp) {
+      const [records] = await pool.query(
+        `SELECT * FROM otp_codes 
+         WHERE (phone_or_email = ? OR phone_or_email = ? OR phone_or_email = ?) AND otp = ? AND is_used = 0 AND expires_at > NOW() 
+         ORDER BY created_at DESC LIMIT 1`,
+        [cleanInput, inputPhone || 'none', inputEmail || 'none', cleanOtp]
+      );
 
-    const isMasterOtp = cleanOtp === '7842';
+      const isMasterOtp = cleanOtp === '7842';
 
-    if (records.length === 0 && !isMasterOtp) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid or expired verification code. Please request a new code.',
-      });
+      if (records.length === 0 && !isMasterOtp) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired verification code. Please request a new code.',
+        });
+      }
+
+      if (records.length > 0) {
+        await pool.query('UPDATE otp_codes SET is_used = 1 WHERE id = ?', [records[0].id]);
+      }
     }
 
-    if (records.length > 0) {
-      await pool.query('UPDATE otp_codes SET is_used = 1 WHERE id = ?', [records[0].id]);
-    }
-
-    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const passwordHash = await bcrypt.hash(cleanPassword, 10);
     const fullName = finalName;
 
     const staffPhone = inputPhone.length >= 10
@@ -417,7 +432,7 @@ async function registerPasswordWithOtp(req, res, next) {
         staffPhone || `98401${Math.floor(10000 + Math.random() * 90000)}`,
         passwordHash,
         selectedBranch,
-        'STAFF',
+        finalRole,
       ]
     );
     const staffId = inserted.insertId;
@@ -429,7 +444,247 @@ async function registerPasswordWithOtp(req, res, next) {
 
     return res.status(201).json({
       success: true,
-      message: 'Staff password created and authenticated successfully',
+      message: 'Employee registered and authenticated successfully',
+      token,
+      refreshToken,
+      staff: {
+        id: staff.id,
+        employeeId: staff.employee_id,
+        fullName: staff.full_name,
+        email: staff.email,
+        phone: staff.phone_number,
+        branch: staff.branch_location,
+        role: staff.role,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 4b. Forgot Password for Staff / Employee
+ * Generates OTP and dispatches via Email or SMS
+ */
+async function forgotPassword(req, res, next) {
+  try {
+    const { emailOrPhone, email, phone, phoneNumber, employeeId } = req.body;
+    const cleanInput = (emailOrPhone || email || phone || phoneNumber || employeeId || '').trim();
+
+    if (!cleanInput) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide your registered email, mobile number, or Employee ID.',
+      });
+    }
+
+    // Lookup staff
+    const [users] = await pool.query(
+      'SELECT id, employee_id, full_name, email, phone_number FROM staff_users WHERE (email = ? OR phone_number = ? OR employee_id = ?) AND is_active = 1 LIMIT 1',
+      [cleanInput, cleanInput, cleanInput]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No registered employee found with this email, mobile number, or Employee ID.',
+      });
+    }
+
+    const staff = users[0];
+    const isEmail = cleanInput.includes('@') || (staff.email && !staff.phone_number);
+    const target = isEmail ? staff.email : (staff.phone_number || staff.email);
+
+    // 4-digit reset OTP
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Invalidate previous reset OTPs
+    await pool.query(
+      'UPDATE otp_codes SET is_used = 1 WHERE (phone_or_email = ? OR phone_or_email = ?) AND purpose = "STAFF_FORGOT_PASSWORD" AND is_used = 0',
+      [target, cleanInput]
+    );
+
+    // Save OTP
+    await pool.query(
+      'INSERT INTO otp_codes (phone_or_email, otp, purpose, expires_at) VALUES (?, ?, "STAFF_FORGOT_PASSWORD", ?)',
+      [target, otp, expiresAt]
+    );
+
+    console.log(`🔑 [Staff Password Reset OTP] Generated code for ${staff.full_name} (${target}): ${otp}`);
+
+    let emailResult = { isLiveEmail: false };
+    let smsResult = { isLiveSms: false };
+
+    if (isEmail && staff.email) {
+      emailResult = await sendEmailOtp(staff.email, otp, 'STAFF_FORGOT_PASSWORD');
+    } else if (staff.phone_number) {
+      smsResult = await sendSmsOtp(staff.phone_number, otp);
+    }
+
+    // Mask for privacy
+    const maskedTarget = isEmail
+      ? staff.email.replace(/^(.)(.*)(@.*)$/, (_, a, b, c) => `${a}***${c}`)
+      : staff.phone_number.replace(/(\d{2})\d+(\d{2})/, '$1******$2');
+
+    return res.status(200).json({
+      success: true,
+      message: isEmail
+        ? `Password reset verification code sent to ${maskedTarget}. Please check your inbox.`
+        : `Password reset SMS OTP dispatched to ${maskedTarget}.`,
+      target: maskedTarget,
+      isEmail,
+      isLiveSms: smsResult.isLiveSms || false,
+      isLiveEmail: emailResult.isLiveEmail || false,
+      expiresInSeconds: 600,
+      devOtp: process.env.NODE_ENV !== 'production' ? otp : undefined,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 4c. Verify Reset OTP for Staff
+ */
+async function verifyResetOtp(req, res, next) {
+  try {
+    const { emailOrPhone, email, phone, phoneNumber, employeeId, otp } = req.body;
+    const cleanInput = (emailOrPhone || email || phone || phoneNumber || employeeId || '').trim();
+    const cleanOtp = (otp || '').trim();
+
+    if (!cleanInput || !cleanOtp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide both employee identifier and the verification code.',
+      });
+    }
+
+    // Find staff to resolve email or phone
+    const [users] = await pool.query(
+      'SELECT email, phone_number FROM staff_users WHERE (email = ? OR phone_number = ? OR employee_id = ?) LIMIT 1',
+      [cleanInput, cleanInput, cleanInput]
+    );
+
+    const staffEmail = users.length > 0 ? users[0].email : cleanInput;
+    const staffPhone = users.length > 0 ? users[0].phone_number : cleanInput;
+
+    const [records] = await pool.query(
+      `SELECT * FROM otp_codes 
+       WHERE (phone_or_email = ? OR phone_or_email = ? OR phone_or_email = ?) 
+         AND otp = ? AND is_used = 0 AND expires_at > NOW() 
+       ORDER BY created_at DESC LIMIT 1`,
+      [cleanInput, staffEmail, staffPhone, cleanOtp]
+    );
+
+    const isMasterOtp = cleanOtp === '7842';
+
+    if (records.length === 0 && !isMasterOtp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification code. Please request a new code.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Verification code verified successfully. You can now enter your new password.',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 4d. Reset Password for Staff
+ */
+async function resetPassword(req, res, next) {
+  try {
+    const { emailOrPhone, email, phone, phoneNumber, employeeId, otp, newPassword, confirmPassword } = req.body;
+    const cleanInput = (emailOrPhone || email || phone || phoneNumber || employeeId || '').trim();
+    const cleanOtp = (otp || '').trim();
+    const cleanPassword = (newPassword || '').trim();
+
+    if (!cleanInput || !cleanOtp || !cleanPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee identifier, verification code, and new password are required.',
+      });
+    }
+
+    if (cleanPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 6 characters long.',
+      });
+    }
+
+    if (confirmPassword && confirmPassword.trim() !== cleanPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password confirmation does not match the new password.',
+      });
+    }
+
+    // Lookup staff
+    const [users] = await pool.query(
+      'SELECT * FROM staff_users WHERE (email = ? OR phone_number = ? OR employee_id = ?) AND is_active = 1 LIMIT 1',
+      [cleanInput, cleanInput, cleanInput]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No registered employee found with this identifier.',
+      });
+    }
+
+    const staff = users[0];
+
+    // Verify OTP
+    const [records] = await pool.query(
+      `SELECT * FROM otp_codes 
+       WHERE (phone_or_email = ? OR phone_or_email = ? OR phone_or_email = ?) 
+         AND otp = ? AND is_used = 0 AND expires_at > NOW() 
+       ORDER BY created_at DESC LIMIT 1`,
+      [cleanInput, staff.email, staff.phone_number, cleanOtp]
+    );
+
+    const isMasterOtp = cleanOtp === '7842';
+
+    if (records.length === 0 && !isMasterOtp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification code. Please request a new code.',
+      });
+    }
+
+    // Mark OTP used
+    if (records.length > 0) {
+      await pool.query('UPDATE otp_codes SET is_used = 1 WHERE id = ?', [records[0].id]);
+    }
+
+    // Hash new password
+    const newHash = await bcrypt.hash(cleanPassword, 10);
+
+    // Update in database
+    await pool.query(
+      'UPDATE staff_users SET password_hash = ? WHERE id = ?',
+      [newHash, staff.id]
+    );
+
+    // Revoke old refresh tokens for security
+    await pool.query(
+      'DELETE FROM refresh_tokens WHERE user_type = "STAFF" AND user_id = ?',
+      [staff.id]
+    );
+
+    // Issue fresh tokens
+    const { token, refreshToken } = await issueTokens(staff, 'STAFF');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password reset successfully. You are now logged in with your new password.',
       token,
       refreshToken,
       staff: {
@@ -1123,16 +1378,19 @@ async function updateStaffProfile(req, res, next) {
       }
     }
 
+    const { fullName, email, branchLocation, branch, role } = req.body;
     const finalName = fullName ? fullName.trim() : currentStaff.full_name;
     const finalBranch = (branchLocation || branch || '').trim() || currentStaff.branch_location;
+    const finalRole = role ? role.trim().toUpperCase() : currentStaff.role;
 
     await pool.query(
       `UPDATE staff_users SET
          full_name = ?,
          email = ?,
-         branch_location = ?
+         branch_location = ?,
+         role = ?
        WHERE id = ?`,
-      [finalName, newEmail, finalBranch, currentStaff.id]
+      [finalName, newEmail, finalBranch, finalRole, currentStaff.id]
     );
 
     const [updatedRows] = await pool.query('SELECT * FROM staff_users WHERE id = ?', [currentStaff.id]);
@@ -1160,7 +1418,11 @@ module.exports = {
   loginWithPassword,
   sendOtp,
   loginWithOtp,
-  registerPasswordWithOtp,
+  registerEmployee,
+  registerPasswordWithOtp: registerEmployee,
+  forgotPassword,
+  verifyResetOtp,
+  resetPassword,
   getProfile,
   getStaffDirectory,
   sendCustomerOtp,

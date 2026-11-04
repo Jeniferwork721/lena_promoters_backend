@@ -48,7 +48,7 @@ async function initializeDatabase() {
         \`phone_number\` VARCHAR(25) NOT NULL UNIQUE,
         \`password_hash\` VARCHAR(255) NOT NULL,
         \`branch_location\` VARCHAR(120) NOT NULL DEFAULT 'Chennai - Tambaram Branch',
-        \`role\` ENUM('STAFF', 'MANAGER', 'ADMIN') NOT NULL DEFAULT 'STAFF',
+        \`role\` VARCHAR(50) NOT NULL DEFAULT 'STAFF',
         \`is_active\` TINYINT(1) NOT NULL DEFAULT 1,
         \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -177,6 +177,14 @@ async function initializeDatabase() {
 
     // Ensure address, date_of_birth, and referred_by columns exist on existing tables
     try {
+      // Ensure role column on staff_users is VARCHAR(50) to support all web app roles (STAFF, ADMIN, MANAGER, SUPER_ADMIN, TELECALLER, etc.)
+      const [roleCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'role'");
+      if (roleCol.length === 0) {
+        await connection.query("ALTER TABLE `staff_users` ADD COLUMN `role` VARCHAR(50) NOT NULL DEFAULT 'STAFF' AFTER `branch_location`");
+      } else if (roleCol[0].Type && roleCol[0].Type.toLowerCase().startsWith('enum')) {
+        await connection.query("ALTER TABLE `staff_users` MODIFY COLUMN `role` VARCHAR(50) NOT NULL DEFAULT 'STAFF'");
+      }
+
       const [refVisitCol] = await connection.query('SHOW COLUMNS FROM `site_visits` LIKE "referred_by"');
       if (refVisitCol.length === 0) {
         await connection.query('ALTER TABLE `site_visits` ADD COLUMN `referred_by` VARCHAR(150) DEFAULT "Direct Company Referral" AFTER `pickup_address`');

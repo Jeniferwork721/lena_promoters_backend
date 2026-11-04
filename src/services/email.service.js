@@ -55,6 +55,8 @@ async function sendEmailOtp(toEmail, otp, purpose = 'STAFF_LOGIN') {
   const purposeTitle =
     purpose === 'STAFF_REGISTER'
       ? 'Staff Account Registration'
+      : purpose === 'STAFF_FORGOT_PASSWORD' || purpose === 'PASSWORD_RESET'
+      ? 'Staff Password Reset'
       : purpose === 'STAFF_LOGIN'
       ? 'Staff Portal Login'
       : 'Investor Verification';
