@@ -290,12 +290,29 @@ async function getStaffEntries(req, res, next) {
       params.push(term, term, term, term, term, term);
     }
 
-    if (staffId && staffId.trim().length > 0 && staffId !== 'ALL') {
-      whereClause += ' AND (staff_id = ? OR staff_name IN (SELECT full_name FROM staff_users WHERE employee_id = ?))';
-      params.push(staffId.trim(), staffId.trim());
-    } else if (staffName && staffName.trim().length > 0 && staffName !== 'ALL') {
-      whereClause += ' AND staff_name LIKE ?';
-      params.push(`%${staffName.trim()}%`);
+    const hasStaffId = staffId && staffId.trim().length > 0 && staffId !== 'ALL';
+    const hasStaffName = staffName && staffName.trim().length > 0 && staffName !== 'ALL';
+
+    if (hasStaffId || hasStaffName) {
+      const cleanId = hasStaffId ? staffId.trim() : '';
+      const cleanName = hasStaffName ? staffName.trim() : '';
+
+      whereClause += ` AND (
+        staff_id = ?
+        OR staff_name LIKE ?
+        OR referred_by LIKE ?
+        OR referred_by LIKE ?
+        OR staff_name IN (SELECT full_name FROM staff_users WHERE employee_id = ?)
+        OR referred_by IN (SELECT full_name FROM staff_users WHERE employee_id = ?)
+      )`;
+      params.push(
+        cleanId || cleanName,
+        `%${cleanName || cleanId}%`,
+        `%${cleanId || cleanName}%`,
+        `%${cleanName || cleanId}%`,
+        cleanId || 'NO_STAFF_ID',
+        cleanId || 'NO_STAFF_ID'
+      );
     }
 
     // 3. Count total matching filtered records
