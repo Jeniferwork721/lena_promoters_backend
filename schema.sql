@@ -65,16 +65,46 @@ CREATE TABLE IF NOT EXISTS `lucky_draw_schemes` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 5. Lucky Draw Coupons Table (Customer & Staff Verification)
+-- 5. Lucky Draw Events / Seasons Table (Every 2-3 Months recurring rounds)
+CREATE TABLE IF NOT EXISTS `lucky_draw_events` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `event_code` VARCHAR(50) NOT NULL UNIQUE,
+  `event_title` VARCHAR(150) NOT NULL,
+  `start_date` DATE NOT NULL,
+  `end_date` DATE NULL,
+  `bumper_prize` VARCHAR(255) NOT NULL DEFAULT '1,200 Sq.Ft DTCP Approved Villa Plot',
+  `assured_gift` VARCHAR(255) NOT NULL DEFAULT 'Guaranteed ₹500 Worth Gift Kit / Voucher',
+  `entry_fee` DECIMAL(10,2) NOT NULL DEFAULT 500.00,
+  `status` ENUM('ACTIVE', 'CONCLUDED', 'ARCHIVED') NOT NULL DEFAULT 'ACTIVE',
+  `winner_coupon` VARCHAR(50) NULL,
+  `receipts_purged` TINYINT(1) NOT NULL DEFAULT 0,
+  `purged_at` DATETIME NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Seed default Season 1
+INSERT INTO `lucky_draw_events` (`id`, `event_code`, `event_title`, `start_date`, `bumper_prize`, `status`)
+VALUES (1, 'SEASON-01', 'Mega Land Lucky Draw - Season 1', '2026-01-01', '1,200 Sq.Ft DTCP Approved Villa Plot', 'ACTIVE')
+ON DUPLICATE KEY UPDATE `status` = 'ACTIVE';
+
+-- 6. Lucky Draw Coupons Table (Customer & Staff Verification & Slot Recycling)
 CREATE TABLE IF NOT EXISTS `lucky_draw_coupons` (
   `id` VARCHAR(60) PRIMARY KEY,
+  `event_id` INT NOT NULL DEFAULT 1,
   `coupon_number` VARCHAR(50) NOT NULL UNIQUE,
   `customer_name` VARCHAR(150) NOT NULL,
   `date_of_birth` DATE NOT NULL,
   `phone_number` VARCHAR(25) NOT NULL,
+  `email` VARCHAR(150) NULL,
   `address` TEXT NOT NULL,
+  `referred_by` VARCHAR(150) NULL,
+  `applicant_phone` VARCHAR(25) NULL,
   `entry_fee` DECIMAL(10,2) NOT NULL DEFAULT 500.00,
-  `status` ENUM('PENDING_STAFF_VERIFICATION', 'VERIFIED_AND_PAID', 'WINNER_ANNOUNCED') NOT NULL DEFAULT 'PENDING_STAFF_VERIFICATION',
+  `status` ENUM('PENDING_STAFF_VERIFICATION', 'VERIFIED_AND_PAID', 'REJECTED', 'WINNER_ANNOUNCED') NOT NULL DEFAULT 'PENDING_STAFF_VERIFICATION',
+  `rejection_reason` VARCHAR(255) NULL,
+  `rejected_by_staff` VARCHAR(150) NULL,
+  `rejected_at` DATETIME NULL,
   `staff_name` VARCHAR(150) NULL,
   `staff_id` VARCHAR(50) NULL,
   `payment_trans_id` VARCHAR(120) NULL,
@@ -85,11 +115,12 @@ CREATE TABLE IF NOT EXISTS `lucky_draw_coupons` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX `idx_coupon_number` (`coupon_number`),
+  INDEX `idx_coupon_event` (`event_id`),
   INDEX `idx_coupon_phone` (`phone_number`),
   INDEX `idx_coupon_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 6. Site Visits Table
+-- 7. Site Visits Table
 CREATE TABLE IF NOT EXISTS `site_visits` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `property_id` VARCHAR(50) NULL,

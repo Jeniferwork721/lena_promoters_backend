@@ -1,5 +1,11 @@
+const fs = require('fs');
+const path = require('path');
 const { pool } = require('../config/db');
-const { generateNextCouponNumber, generateNextCouponNumbers } = require('../utils/couponGenerator');
+const {
+  getActiveEventId,
+  generateNextCouponNumber,
+  generateNextCouponNumbers,
+} = require('../utils/couponGenerator');
 
 /**
  * Helper: Automatically captures customer profile into the `customers` table
@@ -19,7 +25,6 @@ async function upsertCustomerRecord(connOrPool, { customerName, phoneNumber, add
   const cleanEmail = email && email.trim().length > 0 ? email.trim() : null;
 
   try {
-    // Check if customer already exists by unique phone number
     const [existing] = await connOrPool.query(
       'SELECT id, full_name, email, address, referred_by, date_of_birth FROM customers WHERE phone_number = ? LIMIT 1',
       [cleanPhone]
@@ -27,9 +32,7 @@ async function upsertCustomerRecord(connOrPool, { customerName, phoneNumber, add
 
     if (existing.length > 0) {
       const current = existing[0];
-      // USER RULE: If customer already exists, DO NOT overwrite their profile in user table from coupon application!
-      // Customer profile is only modified from the Settings / Profile Edit screen.
-      console.log(`👤 [Customer Sync] Existing customer found (ID: ${current.id}, Phone: ${cleanPhone}). Preserving original profile; coupon linked.`);
+      console.log(`ℹ️ [Customer Sync] Existing customer found (ID: ${current.id}, Phone: ${cleanPhone}). Preserving original profile; coupon linked.`);
       return current.id;
     } else {
       const [insertRes] = await connOrPool.query(
@@ -37,7 +40,7 @@ async function upsertCustomerRecord(connOrPool, { customerName, phoneNumber, add
          VALUES (?, ?, ?, ?, ?, ?, 1)`,
         [cleanName, cleanPhone, cleanEmail, cleanAddress, cleanReferredBy, cleanDob]
       );
-      console.log(`👤 [Customer Sync] Registered new customer profile from first coupon (ID: ${insertRes.insertId}, Phone: ${cleanPhone}).`);
+      console.log(`✅ [Customer Sync] Registered new customer profile from first coupon (ID: ${insertRes.insertId}, Phone: ${cleanPhone}).`);
       return insertRes.insertId;
     }
   } catch (err) {
@@ -90,7 +93,6 @@ async function customerApply(req, res, next) {
       phoneNumber,
       address,
       referredBy,
-      customCouponNumber,
       paymentTransId,
       paymentMode,
       paymentScreenshotName,
@@ -104,12 +106,10 @@ async function customerApply(req, res, next) {
       });
     }
 
-    // Referral: If not referred by specific staff, register under official Company Profile
     const finalReferredBy = (referredBy && referredBy.trim().length > 0)
       ? referredBy.trim()
       : 'Lena Promoters (Company Direct)';
 
-    // Payment screenshot is strictly mandatory for verification
     const hasScreenshot = Boolean(paymentScreenshotName || paymentScreenshotUrl);
     if (!hasScreenshot) {
       return res.status(400).json({
@@ -120,14 +120,16 @@ async function customerApply(req, res, next) {
     const cleanTransId = (paymentTransId || '').trim();
     const finalTransId = cleanTransId || 'UPI_RECEIPT_ATTACHED';
 
-    // Parse requested coupon quantity (Offer: Buy 10 coupons -> 1 FREE coupon)
     const quantity = Math.max(1, parseInt(req.body.quantity, 10) || 1);
     const freeCount = Math.floor(quantity / 10);
     const totalCount = quantity + freeCount;
     const totalAmount = quantity * 500;
 
-    // Auto-generate next sequential coupon numbers continuously in batch
-    const couponNumbers = await generateNextCouponNumbers(totalCount);
+    // Determine current active season / event ID
+    const activeEventId = await getActiveEventId();
+
+    // Auto-generate next sequential coupon numbers with slot recycling & gap-filling
+    const couponNumbers = await generateNextCouponNumbers(totalCount, activeEventId);
     const entryFee = 500.00;
     const status = 'PENDING_STAFF_VERIFICATION';
     const applicantPhone = (req.body.applicantPhone || '').trim() || null;
@@ -140,33 +142,61 @@ async function customerApply(req, res, next) {
     for (let i = 0; i < couponNumbers.length; i++) {
       const cNum = couponNumbers[i];
       const couponId = `ld-${nowTs}-${i}-${Math.random().toString(36).substring(2, 6)}`;
-      const isBonus = i >= quantity; // coupons beyond the paid count are free promotional tickets
+      const isBonus = i >= quantity;
 
-      await pool.query(
-        `INSERT INTO lucky_draw_coupons 
-          (id, coupon_number, customer_name, date_of_birth, phone_number, email, address, referred_by, applicant_phone, entry_fee, status, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          couponId,
-          cNum,
-          customerName.trim(),
-          dateOfBirth,
-          phoneNumber.trim(),
-          recipientEmail,
-          address.trim(),
-          finalReferredBy,
-          applicantPhone,
-          entryFee,
-          status,
-          finalTransId,
-          paymentMode || 'UPI QR',
-          paymentScreenshotName || null,
-          paymentScreenshotUrl || null,
-        ]
-      );
+      try {
+        await pool.query(
+          `INSERT INTO lucky_draw_coupons 
+            (id, event_id, coupon_number, customer_name, date_of_birth, phone_number, email, address, referred_by, applicant_phone, entry_fee, status, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            couponId,
+            activeEventId,
+            cNum,
+            customerName.trim(),
+            dateOfBirth,
+            phoneNumber.trim(),
+            recipientEmail,
+            address.trim(),
+            finalReferredBy,
+            applicantPhone,
+            entryFee,
+            status,
+            finalTransId,
+            paymentMode || 'UPI QR',
+            paymentScreenshotName || null,
+            paymentScreenshotUrl || null,
+          ]
+        );
+      } catch (insertErr) {
+        // Fallback for legacy DB if event_id column is not yet present
+        await pool.query(
+          `INSERT INTO lucky_draw_coupons 
+            (id, coupon_number, customer_name, date_of_birth, phone_number, email, address, referred_by, applicant_phone, entry_fee, status, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            couponId,
+            cNum,
+            customerName.trim(),
+            dateOfBirth,
+            phoneNumber.trim(),
+            recipientEmail,
+            address.trim(),
+            finalReferredBy,
+            applicantPhone,
+            entryFee,
+            status,
+            finalTransId,
+            paymentMode || 'UPI QR',
+            paymentScreenshotName || null,
+            paymentScreenshotUrl || null,
+          ]
+        );
+      }
 
       createdCoupons.push({
         id: couponId,
+        eventId: activeEventId,
         couponNumber: cNum,
         customerName: customerName.trim(),
         dateOfBirth,
@@ -186,7 +216,7 @@ async function customerApply(req, res, next) {
       });
     }
 
-    console.log(`🎟️ [Batch Coupons Issued] ${totalCount} coupon(s) (${quantity} paid + ${freeCount} free bonus) registered for ${customerName.trim()} (Phone: ${phoneNumber.trim()}). Tokens: ${couponNumbers.join(', ')}`);
+    console.log(`🎟️ [Coupons Issued] ${totalCount} coupon(s) for ${customerName.trim()} (Phone: ${phoneNumber.trim()}). Tokens: ${couponNumbers.join(', ')}`);
 
     const successMsg = totalCount > 1
       ? `${totalCount} Lucky Draw coupons applied successfully (${quantity} paid + ${freeCount} FREE bonus). Staff verification pending.`
@@ -214,7 +244,7 @@ async function customerApply(req, res, next) {
  */
 async function getStaffEntries(req, res, next) {
   try {
-    const { status, search, staffId, staffName, sortBy, sortOrder } = req.query;
+    const { status, search, staffId, staffName, eventId, sortBy, sortOrder } = req.query;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 20));
     const offset = (page - 1) * limit;
@@ -225,6 +255,7 @@ async function getStaffEntries(req, res, next) {
         COUNT(*) as totalEntries,
         SUM(CASE WHEN status = 'PENDING_STAFF_VERIFICATION' THEN 1 ELSE 0 END) as pendingCount,
         SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN 1 ELSE 0 END) as verifiedCount,
+        SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejectedCount,
         SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN entry_fee ELSE 0 END) as totalCollected
       FROM lucky_draw_coupons
     `);
@@ -233,6 +264,7 @@ async function getStaffEntries(req, res, next) {
       totalEntries: parseInt(metricsRows[0].totalEntries, 10) || 0,
       pendingCount: parseInt(metricsRows[0].pendingCount, 10) || 0,
       verifiedCount: parseInt(metricsRows[0].verifiedCount, 10) || 0,
+      rejectedCount: parseInt(metricsRows[0].rejectedCount, 10) || 0,
       totalCollected: parseFloat(metricsRows[0].totalCollected || 0),
     };
 
@@ -243,6 +275,13 @@ async function getStaffEntries(req, res, next) {
     if (status && status !== 'ALL') {
       whereClause += ' AND status = ?';
       params.push(status);
+    }
+
+    if (eventId && eventId !== 'ALL') {
+      try {
+        whereClause += ' AND event_id = ?';
+        params.push(parseInt(eventId, 10));
+      } catch (_) {}
     }
 
     if (search && search.trim().length > 0) {
@@ -298,6 +337,7 @@ async function getStaffEntries(req, res, next) {
 
     const entries = rows.map(c => ({
       id: c.id,
+      eventId: c.event_id || 1,
       couponNumber: c.coupon_number,
       customerName: c.customer_name,
       dateOfBirth: c.date_of_birth,
@@ -306,6 +346,9 @@ async function getStaffEntries(req, res, next) {
       referredBy: c.referred_by || null,
       entryFee: parseFloat(c.entry_fee),
       status: c.status,
+      rejectionReason: c.rejection_reason || null,
+      rejectedByStaff: c.rejected_by_staff || null,
+      rejectedAt: c.rejected_at || null,
       staffName: c.staff_name,
       staffId: c.staff_id,
       paymentTransId: c.payment_trans_id,
@@ -359,6 +402,7 @@ async function getCouponById(req, res, next) {
       success: true,
       coupon: {
         id: c.id,
+        eventId: c.event_id || 1,
         couponNumber: c.coupon_number,
         customerName: c.customer_name,
         dateOfBirth: c.date_of_birth,
@@ -367,6 +411,9 @@ async function getCouponById(req, res, next) {
         referredBy: c.referred_by || null,
         entryFee: parseFloat(c.entry_fee),
         status: c.status,
+        rejectionReason: c.rejection_reason || null,
+        rejectedByStaff: c.rejected_by_staff || null,
+        rejectedAt: c.rejected_at || null,
         staffName: c.staff_name,
         staffId: c.staff_id,
         paymentTransId: c.payment_trans_id,
@@ -404,74 +451,55 @@ async function staffEditAndVerify(req, res, next) {
       markAsVerified = true,
     } = req.body;
 
-    const [existing] = await pool.query('SELECT * FROM lucky_draw_coupons WHERE id = ?', [id]);
-    if (existing.length === 0) {
-      return res.status(404).json({ success: false, message: 'Coupon not found.' });
+    const [rows] = await pool.query('SELECT * FROM lucky_draw_coupons WHERE id = ? LIMIT 1', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Coupon record not found for verification.',
+      });
     }
 
-    const current = existing[0];
-
-    // If changing coupon number, ensure uniqueness
-    let finalCouponNo = current.coupon_number;
-    if (couponNumber && couponNumber.trim().toUpperCase() !== current.coupon_number) {
-      const formatted = couponNumber.trim().toUpperCase();
-      const [duplicate] = await pool.query(
-        'SELECT id FROM lucky_draw_coupons WHERE coupon_number = ? AND id != ?',
-        [formatted, id]
-      );
-      if (duplicate.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: `Coupon number ${formatted} is already assigned to another entry.`,
-        });
-      }
-      finalCouponNo = formatted;
-    }
-
+    const current = rows[0];
+    const finalCouponNo = couponNumber ? couponNumber.trim().toUpperCase() : current.coupon_number;
     const newStatus = markAsVerified ? 'VERIFIED_AND_PAID' : current.status;
     const verifiedAt = markAsVerified ? new Date() : current.verified_at;
+    const finalReferred = referredBy ? referredBy.trim() : current.referred_by;
 
-    const finalReferred = referredBy !== undefined
-      ? (referredBy && referredBy.trim().length > 0 ? referredBy.trim() : 'Lena Promoters (Company Direct)')
-      : current.referred_by;
-
-      await pool.query(
-        `UPDATE lucky_draw_coupons SET
-          coupon_number = ?,
-          customer_name = ?,
-          date_of_birth = ?,
-          phone_number = ?,
-          address = ?,
-          referred_by = ?,
-          staff_name = ?,
-          staff_id = ?,
-          payment_trans_id = ?,
-          payment_mode = ?,
-          payment_screenshot_name = ?,
-          payment_screenshot_url = ?,
-          status = ?,
-          verified_at = ?
-         WHERE id = ?`,
-        [
-          finalCouponNo,
-          customerName ?? current.customer_name,
-          dateOfBirth ?? current.date_of_birth,
-          phoneNumber ?? current.phone_number,
-          address ?? current.address,
-          finalReferred,
-          staffName ?? current.staff_name,
-          staffId ?? current.staff_id,
-          paymentTransId ?? current.payment_trans_id,
-          paymentMode ?? current.payment_mode,
-          paymentScreenshotName ?? current.payment_screenshot_name,
-          paymentScreenshotUrl ?? current.payment_screenshot_url,
-          newStatus,
-          verifiedAt,
-          id,
-        ]
-      );
-
-    // Note: Verification updates only the coupon record; user profiles remain managed by users.
+    await pool.query(
+      `UPDATE lucky_draw_coupons SET
+        coupon_number = ?,
+        customer_name = ?,
+        date_of_birth = ?,
+        phone_number = ?,
+        address = ?,
+        referred_by = ?,
+        staff_name = ?,
+        staff_id = ?,
+        payment_trans_id = ?,
+        payment_mode = ?,
+        payment_screenshot_name = ?,
+        payment_screenshot_url = ?,
+        status = ?,
+        verified_at = ?
+       WHERE id = ?`,
+      [
+        finalCouponNo,
+        customerName ?? current.customer_name,
+        dateOfBirth ?? current.date_of_birth,
+        phoneNumber ?? current.phone_number,
+        address ?? current.address,
+        finalReferred,
+        staffName ?? current.staff_name,
+        staffId ?? current.staff_id,
+        paymentTransId ?? current.payment_trans_id,
+        paymentMode ?? current.payment_mode,
+        paymentScreenshotName ?? current.payment_screenshot_name,
+        paymentScreenshotUrl ?? current.payment_screenshot_url,
+        newStatus,
+        verifiedAt,
+        id,
+      ]
+    );
 
     return res.status(200).json({
       success: true,
@@ -489,7 +517,91 @@ async function staffEditAndVerify(req, res, next) {
 }
 
 /**
- * 6. Staff Direct Entry (For walk-in customers registered directly by staff)
+ * 6. Staff: Reject invalid/scammed coupon and release the slot number back to the pool
+ */
+async function staffRejectCoupon(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { rejectionReason } = req.body;
+    const staffUser = req.staff;
+
+    const staffName = staffUser ? (staffUser.fullName || staffUser.name || 'Staff') : 'Staff Member';
+    const staffId = staffUser ? (staffUser.employeeId || staffUser.id || '') : '';
+    const reason = (rejectionReason && rejectionReason.trim().length > 0)
+      ? rejectionReason.trim()
+      : 'Invalid / Unverified Payment';
+
+    const [rows] = await pool.query(
+      'SELECT id, coupon_number, customer_name, phone_number, status FROM lucky_draw_coupons WHERE id = ? OR coupon_number = ? LIMIT 1',
+      [id, id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Coupon entry not found.',
+      });
+    }
+
+    const current = rows[0];
+    if (current.status === 'VERIFIED_AND_PAID') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot reject an already verified and paid coupon ticket.',
+      });
+    }
+
+    const originalCouponNumber = current.coupon_number;
+    // Renaming the token releases the slot (e.g. LENA-LD-0011) back to the generator pool
+    // while keeping customer/scam details for audit purposes
+    const releasedTokenName = `REJ-${originalCouponNumber}-${Date.now()}`;
+    const now = new Date();
+
+    try {
+      await pool.query(
+        `UPDATE lucky_draw_coupons 
+         SET status = 'REJECTED',
+             coupon_number = ?,
+             rejection_reason = ?,
+             rejected_by_staff = ?,
+             rejected_at = ?
+         WHERE id = ?`,
+        [
+          releasedTokenName,
+          reason,
+          `${staffName} (${staffId})`,
+          now,
+          current.id,
+        ]
+      );
+    } catch (_) {
+      // Fallback if rejection columns are not yet in DB
+      await pool.query(
+        `UPDATE lucky_draw_coupons 
+         SET status = 'REJECTED',
+             coupon_number = ?
+         WHERE id = ?`,
+        [releasedTokenName, current.id]
+      );
+    }
+
+    console.log(`🚫 [Coupon Rejected] ${originalCouponNumber} rejected by ${staffName} (Reason: ${reason}). Slot ${originalCouponNumber} released back to pool!`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Coupon rejected successfully. Slot ${originalCouponNumber} has been freed and will be assigned to the next applicant.`,
+      releasedCouponNumber: originalCouponNumber,
+      status: 'REJECTED',
+      rejectionReason: reason,
+      rejectedBy: `${staffName} (${staffId})`,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 7. Staff Direct Entry (For walk-in customers registered directly by staff)
  */
 async function staffDirectEntry(req, res, next) {
   try {
@@ -516,43 +628,71 @@ async function staffDirectEntry(req, res, next) {
       });
     }
 
-    const couponNumber = await generateNextCouponNumber(customCouponNumber);
+    const activeEventId = await getActiveEventId();
+    const couponNumber = await generateNextCouponNumber(customCouponNumber, activeEventId);
     const id = `ld-${Date.now()}`;
     const entryFee = 500.00;
     const status = markAsVerified ? 'VERIFIED_AND_PAID' : 'PENDING_STAFF_VERIFICATION';
     const verifiedAt = markAsVerified ? new Date() : null;
 
-    await pool.query(
-      `INSERT INTO lucky_draw_coupons 
-        (id, coupon_number, customer_name, date_of_birth, phone_number, address, referred_by, entry_fee, status, staff_name, staff_id, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url, verified_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        couponNumber,
-        customerName.trim(),
-        dateOfBirth || '1990-01-01',
-        phoneNumber.trim(),
-        address.trim(),
-        referredBy ? referredBy.trim() : null,
-        entryFee,
-        status,
-        staffName || 'Authorized Staff',
-        staffId || 'LP-EMP',
-        paymentTransId || 'DIRECT_CASH',
-        paymentMode || 'Direct Cash',
-        paymentScreenshotName || null,
-        paymentScreenshotUrl || null,
-        verifiedAt,
-      ]
-    );
-
-    // Note: Walk-in entry creates the lucky draw coupon record only. Customer can create their account separately.
+    try {
+      await pool.query(
+        `INSERT INTO lucky_draw_coupons 
+          (id, event_id, coupon_number, customer_name, date_of_birth, phone_number, address, referred_by, entry_fee, status, staff_name, staff_id, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url, verified_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          activeEventId,
+          couponNumber,
+          customerName.trim(),
+          dateOfBirth || '1990-01-01',
+          phoneNumber.trim(),
+          address.trim(),
+          referredBy ? referredBy.trim() : null,
+          entryFee,
+          status,
+          staffName || 'Authorized Staff',
+          staffId || 'LP-EMP',
+          paymentTransId || 'DIRECT_CASH',
+          paymentMode || 'Direct Cash',
+          paymentScreenshotName || null,
+          paymentScreenshotUrl || null,
+          verifiedAt,
+        ]
+      );
+    } catch (_) {
+      // Fallback for legacy DB without event_id
+      await pool.query(
+        `INSERT INTO lucky_draw_coupons 
+          (id, coupon_number, customer_name, date_of_birth, phone_number, address, referred_by, entry_fee, status, staff_name, staff_id, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url, verified_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          couponNumber,
+          customerName.trim(),
+          dateOfBirth || '1990-01-01',
+          phoneNumber.trim(),
+          address.trim(),
+          referredBy ? referredBy.trim() : null,
+          entryFee,
+          status,
+          staffName || 'Authorized Staff',
+          staffId || 'LP-EMP',
+          paymentTransId || 'DIRECT_CASH',
+          paymentMode || 'Direct Cash',
+          paymentScreenshotName || null,
+          paymentScreenshotUrl || null,
+          verifiedAt,
+        ]
+      );
+    }
 
     return res.status(201).json({
       success: true,
       message: 'Walk-in customer entry created successfully.',
       coupon: {
         id,
+        eventId: activeEventId,
         couponNumber,
         customerName,
         status,
@@ -566,7 +706,7 @@ async function staffDirectEntry(req, res, next) {
 }
 
 /**
- * 7. Get Coupons belonging to a specific customer (by phone or customer auth)
+ * 8. Get Coupons belonging to a specific customer (by phone or customer auth)
  */
 async function getCustomerCoupons(req, res, next) {
   try {
@@ -586,16 +726,18 @@ async function getCustomerCoupons(req, res, next) {
 
     const [countRows] = await pool.query(
       `SELECT COUNT(*) as total FROM lucky_draw_coupons 
-       WHERE REPLACE(REPLACE(phone_number, '+91', ''), ' ', '') LIKE ? 
-          OR (applicant_phone IS NOT NULL AND REPLACE(REPLACE(applicant_phone, '+91', ''), ' ', '') LIKE ?)`,
+       WHERE (REPLACE(REPLACE(phone_number, '+91', ''), ' ', '') LIKE ? 
+          OR (applicant_phone IS NOT NULL AND REPLACE(REPLACE(applicant_phone, '+91', ''), ' ', '') LIKE ?))
+         AND status != 'REJECTED'`,
       [`%${cleanPhone}%`, `%${cleanPhone}%`]
     );
     const total = countRows[0].total || 0;
 
     const [rows] = await pool.query(
       `SELECT * FROM lucky_draw_coupons 
-       WHERE REPLACE(REPLACE(phone_number, '+91', ''), ' ', '') LIKE ? 
-          OR (applicant_phone IS NOT NULL AND REPLACE(REPLACE(applicant_phone, '+91', ''), ' ', '') LIKE ?)
+       WHERE (REPLACE(REPLACE(phone_number, '+91', ''), ' ', '') LIKE ? 
+          OR (applicant_phone IS NOT NULL AND REPLACE(REPLACE(applicant_phone, '+91', ''), ' ', '') LIKE ?))
+         AND status != 'REJECTED'
        ORDER BY created_at DESC
        LIMIT ? OFFSET ?`,
       [`%${cleanPhone}%`, `%${cleanPhone}%`, limit, offset]
@@ -603,6 +745,7 @@ async function getCustomerCoupons(req, res, next) {
 
     const coupons = rows.map(c => ({
       id: c.id,
+      eventId: c.event_id || 1,
       couponNumber: c.coupon_number,
       customerName: c.customer_name,
       dateOfBirth: c.date_of_birth,
@@ -636,12 +779,315 @@ async function getCustomerCoupons(req, res, next) {
   }
 }
 
+/**
+ * 9. Get Currently Active Lucky Draw Event / Season
+ */
+async function getActiveEvent(req, res, next) {
+  try {
+    let event = null;
+    try {
+      const [rows] = await pool.query(
+        "SELECT * FROM lucky_draw_events WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1"
+      );
+      if (rows && rows.length > 0) {
+        event = rows[0];
+      }
+    } catch (_) {}
+
+    if (!event) {
+      event = {
+        id: 1,
+        event_code: 'SEASON-01',
+        event_title: 'Mega Land Lucky Draw - Season 1',
+        start_date: new Date('2026-01-01'),
+        bumper_prize: '1,200 Sq.Ft DTCP Approved Villa Plot',
+        assured_gift: 'Guaranteed ₹500 Worth Gift Kit / Voucher',
+        entry_fee: '500.00',
+        status: 'ACTIVE',
+      };
+    }
+
+    let totalEntries = 0;
+    let verifiedEntries = 0;
+    try {
+      const [countRows] = await pool.query(
+        'SELECT COUNT(*) as total, SUM(CASE WHEN status = "VERIFIED_AND_PAID" THEN 1 ELSE 0 END) as verified FROM lucky_draw_coupons WHERE (event_id = ? OR event_id IS NULL)',
+        [event.id]
+      );
+      totalEntries = countRows[0].total || 0;
+      verifiedEntries = countRows[0].verified || 0;
+    } catch (_) {}
+
+    return res.status(200).json({
+      success: true,
+      event: {
+        id: event.id,
+        eventCode: event.event_code,
+        eventTitle: event.event_title,
+        startDate: event.start_date,
+        endDate: event.end_date,
+        bumperPrize: event.bumper_prize,
+        assuredGift: event.assured_gift,
+        entryFee: parseFloat(event.entry_fee || 500),
+        status: event.status,
+        totalEntries,
+        verifiedEntries,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 10. Start a New Lucky Draw Season (Admin/Manager: Resets numbering from LENA-LD-0001!)
+ */
+async function startNewEvent(req, res, next) {
+  try {
+    const { eventTitle, bumperPrize, assuredGift, entryFee } = req.body;
+    const staff = req.staff;
+
+    if (staff && staff.role !== 'ADMIN' && staff.role !== 'MANAGER') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only Admin or Manager can start a new Lucky Draw season.',
+      });
+    }
+
+    // Ensure lucky_draw_events table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lucky_draw_events (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        event_code VARCHAR(50) NOT NULL UNIQUE,
+        event_title VARCHAR(150) NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NULL,
+        bumper_prize VARCHAR(255) NOT NULL DEFAULT '1,200 Sq.Ft DTCP Approved Villa Plot',
+        assured_gift VARCHAR(255) NOT NULL DEFAULT 'Guaranteed ₹500 Worth Gift Kit / Voucher',
+        entry_fee DECIMAL(10,2) NOT NULL DEFAULT 500.00,
+        status ENUM('ACTIVE', 'CONCLUDED', 'ARCHIVED') NOT NULL DEFAULT 'ACTIVE',
+        receipts_purged TINYINT(1) NOT NULL DEFAULT 0,
+        purged_at DATETIME NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    // 1. Mark existing active events as CONCLUDED
+    await pool.query(
+      "UPDATE lucky_draw_events SET status = 'CONCLUDED', end_date = CURDATE() WHERE status = 'ACTIVE'"
+    );
+
+    // 2. Determine new season count
+    const [allEvents] = await pool.query('SELECT COUNT(*) as cnt FROM lucky_draw_events');
+    const nextSeasonNum = (allEvents[0].cnt || 0) + 1;
+    const eventCode = `SEASON-${String(nextSeasonNum).padStart(2, '0')}`;
+    const title = (eventTitle && eventTitle.trim().length > 0)
+      ? eventTitle.trim()
+      : `Mega Land Lucky Draw - Season ${nextSeasonNum}`;
+
+    const [insertRes] = await pool.query(
+      `INSERT INTO lucky_draw_events 
+        (event_code, event_title, start_date, bumper_prize, assured_gift, entry_fee, status)
+       VALUES (?, ?, CURDATE(), ?, ?, ?, 'ACTIVE')`,
+      [
+        eventCode,
+        title,
+        bumperPrize || '1,200 Sq.Ft DTCP Approved Villa Plot',
+        assuredGift || 'Guaranteed ₹500 Worth Gift Kit / Voucher',
+        entryFee ? parseFloat(entryFee) : 500.00,
+      ]
+    );
+
+    console.log(`🎉 [New Season Started] Event ID: ${insertRes.insertId}, Code: ${eventCode}. Numbering sequence will start from LENA-LD-0001!`);
+
+    return res.status(201).json({
+      success: true,
+      message: `Season ${nextSeasonNum} started successfully! Coupon numbers will now start from LENA-LD-0001.`,
+      event: {
+        id: insertRes.insertId,
+        eventCode,
+        eventTitle: title,
+        startDate: new Date().toISOString(),
+        status: 'ACTIVE',
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 11. End Season and Optionally Purge Unwanted Receipts to Free Disk Space
+ */
+async function endEvent(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { purgeReceipts, winnerCoupon } = req.body;
+    const staff = req.staff;
+
+    if (staff && staff.role !== 'ADMIN' && staff.role !== 'MANAGER') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only Admin or Manager can end a Lucky Draw season.',
+      });
+    }
+
+    await pool.query(
+      `UPDATE lucky_draw_events 
+       SET status = 'CONCLUDED', 
+           end_date = CURDATE(), 
+           winner_coupon = ?
+       WHERE id = ?`,
+      [winnerCoupon || null, id]
+    );
+
+    let purgedCount = 0;
+    if (purgeReceipts === true || purgeReceipts === 'true') {
+      const [receipts] = await pool.query(
+        'SELECT payment_screenshot_name FROM lucky_draw_coupons WHERE event_id = ? AND payment_screenshot_name IS NOT NULL',
+        [id]
+      );
+
+      const uploadDir = path.join(__dirname, '../../uploads/receipts');
+      for (const r of receipts) {
+        if (r.payment_screenshot_name) {
+          const filePath = path.join(uploadDir, r.payment_screenshot_name);
+          try {
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+              purgedCount++;
+            }
+          } catch (e) {
+            console.error(`Could not delete receipt file ${filePath}:`, e.message);
+          }
+        }
+      }
+
+      await pool.query(
+        `UPDATE lucky_draw_coupons 
+         SET payment_screenshot_url = NULL, 
+             payment_screenshot_name = 'ARCHIVED_RECEIPT_PURGED'
+         WHERE event_id = ?`,
+        [id]
+      );
+
+      await pool.query(
+        'UPDATE lucky_draw_events SET receipts_purged = 1, purged_at = NOW() WHERE id = ?',
+        [id]
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Event concluded successfully.${purgeReceipts ? ` Purged ${purgedCount} transaction receipt files from storage.` : ''}`,
+      purgedCount,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 12. Purge Receipts on Demand
+ */
+async function purgeEventReceipts(req, res, next) {
+  try {
+    const { id } = req.params;
+    const staff = req.staff;
+
+    if (staff && staff.role !== 'ADMIN' && staff.role !== 'MANAGER') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only Admin or Manager can purge receipt storage.',
+      });
+    }
+
+    const [receipts] = await pool.query(
+      "SELECT payment_screenshot_name FROM lucky_draw_coupons WHERE event_id = ? AND payment_screenshot_name IS NOT NULL AND payment_screenshot_name != 'ARCHIVED_RECEIPT_PURGED'",
+      [id]
+    );
+
+    const uploadDir = path.join(__dirname, '../../uploads/receipts');
+    let purgedCount = 0;
+
+    for (const r of receipts) {
+      if (r.payment_screenshot_name) {
+        const filePath = path.join(uploadDir, r.payment_screenshot_name);
+        try {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            purgedCount++;
+          }
+        } catch (e) {
+          console.error(`Could not delete file ${filePath}:`, e.message);
+        }
+      }
+    }
+
+    await pool.query(
+      `UPDATE lucky_draw_coupons 
+       SET payment_screenshot_url = NULL, 
+           payment_screenshot_name = 'ARCHIVED_RECEIPT_PURGED'
+       WHERE event_id = ?`,
+      [id]
+    );
+
+    await pool.query(
+      'UPDATE lucky_draw_events SET receipts_purged = 1, purged_at = NOW() WHERE id = ?',
+      [id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully purged ${purgedCount} receipt images from disk to free storage space.`,
+      purgedCount,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 13. List all events / seasons
+ */
+async function listEvents(req, res, next) {
+  try {
+    let rows = [];
+    try {
+      const [dbRows] = await pool.query('SELECT * FROM lucky_draw_events ORDER BY id DESC');
+      rows = dbRows;
+    } catch (_) {}
+
+    return res.status(200).json({
+      success: true,
+      events: rows.map(r => ({
+        id: r.id,
+        eventCode: r.event_code,
+        eventTitle: r.event_title,
+        startDate: r.start_date,
+        endDate: r.end_date,
+        bumperPrize: r.bumper_prize,
+        status: r.status,
+        receiptsPurged: Boolean(r.receipts_purged),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getActiveScheme,
   customerApply,
   getStaffEntries,
   getCouponById,
   staffEditAndVerify,
+  staffRejectCoupon,
   staffDirectEntry,
   getCustomerCoupons,
+  getActiveEvent,
+  startNewEvent,
+  endEvent,
+  purgeEventReceipts,
+  listEvents,
 };
