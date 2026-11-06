@@ -285,17 +285,15 @@ async function getStaffEntries(req, res, next) {
     }
 
     if (search && search.trim().length > 0) {
-      whereClause += ' AND (coupon_number LIKE ? OR customer_name LIKE ? OR phone_number LIKE ? OR staff_name LIKE ? OR referred_by LIKE ?)';
+      whereClause += ' AND (coupon_number LIKE ? OR customer_name LIKE ? OR phone_number LIKE ? OR staff_name LIKE ? OR staff_id LIKE ? OR referred_by LIKE ?)';
       const term = `%${search.trim()}%`;
-      params.push(term, term, term, term, term);
+      params.push(term, term, term, term, term, term);
     }
 
     if (staffId && staffId.trim().length > 0 && staffId !== 'ALL') {
-      whereClause += ' AND staff_id = ?';
-      params.push(staffId.trim());
-    }
-
-    if (staffName && staffName.trim().length > 0 && staffName !== 'ALL') {
+      whereClause += ' AND (staff_id = ? OR staff_name IN (SELECT full_name FROM staff_users WHERE employee_id = ?))';
+      params.push(staffId.trim(), staffId.trim());
+    } else if (staffName && staffName.trim().length > 0 && staffName !== 'ALL') {
       whereClause += ' AND staff_name LIKE ?';
       params.push(`%${staffName.trim()}%`);
     }
