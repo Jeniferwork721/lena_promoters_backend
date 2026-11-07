@@ -847,13 +847,17 @@ async function loginCustomerWithOtp(req, res, next) {
     let customer = null;
     if (isEmail) {
       const [rows] = await pool.query(
-        'SELECT id, full_name, phone_number, email FROM customers WHERE email = ? AND is_active = 1 LIMIT 1',
+        `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, 
+                aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic 
+         FROM customers WHERE email = ? AND is_active = 1 LIMIT 1`,
         [cleanInput]
       );
       if (rows.length > 0) customer = rows[0];
     } else {
       const [rows] = await pool.query(
-        `SELECT id, full_name, phone_number, email FROM customers 
+        `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, 
+                aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic 
+         FROM customers 
          WHERE (phone_number = ? OR phone_number LIKE ? OR REPLACE(phone_number, '+91', '') LIKE ?) 
            AND is_active = 1 LIMIT 1`,
         [cleanInput, `%${last10}%`, `%${last10}%`]
@@ -981,7 +985,12 @@ async function registerCustomer(req, res, next) {
     const customerId = insertRes.insertId;
     console.log(`👤 [Customer Register] Created new unique customer profile (ID: ${customerId}, Phone: ${last10})`);
 
-    const [rows] = await pool.query('SELECT id, full_name, phone_number, email FROM customers WHERE id = ?', [customerId]);
+    const [rows] = await pool.query(
+      `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, 
+              aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic 
+       FROM customers WHERE id = ?`,
+      [customerId]
+    );
     const customer = rows[0];
 
     const { token, refreshToken } = await issueTokens(customer, 'CUSTOMER');
@@ -996,6 +1005,18 @@ async function registerCustomer(req, res, next) {
         fullName: customer.full_name,
         phoneNumber: customer.phone_number,
         email: customer.email || '',
+        address: customer.address || '',
+        dateOfBirth: customer.date_of_birth || '',
+        street: customer.street || '',
+        landmark: customer.landmark || '',
+        city: customer.city || '',
+        pincode: customer.pincode || '',
+        aadharNumber: customer.aadhar_number || '',
+        panNumber: customer.pan_number || '',
+        nomineeName: customer.nominee_name || '',
+        dreamLandSize: customer.dream_land_size || '',
+        occupation: customer.occupation || '',
+        profilePic: customer.profile_pic || '',
       },
     });
   } catch (err) {
