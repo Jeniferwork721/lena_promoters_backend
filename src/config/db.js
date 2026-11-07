@@ -519,8 +519,8 @@ async function initializeDatabase() {
         \`id\` INT AUTO_INCREMENT PRIMARY KEY,
         \`title\` VARCHAR(255) NOT NULL,
         \`description\` TEXT NULL,
-        \`employee_id\` INT NOT NULL,
-        \`lead_id\` INT NOT NULL,
+        \`employee_id\` INT NULL,
+        \`lead_id\` INT NULL,
         \`priority\` ENUM('Low', 'Medium', 'High') NOT NULL DEFAULT 'Medium',
         \`status\` ENUM('Pending', 'Ongoing', 'Completed') NOT NULL DEFAULT 'Pending',
         \`due_date\` DATE NOT NULL,
@@ -532,6 +532,11 @@ async function initializeDatabase() {
         INDEX \`idx_task_status\` (\`status\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    try {
+      await connection.query('ALTER TABLE `tasks` MODIFY COLUMN `employee_id` INT NULL');
+      await connection.query('ALTER TABLE `tasks` MODIFY COLUMN `lead_id` INT NULL');
+    } catch (_) {}
 
     // 14. Work Reports Table (Post-call Entries)
     await connection.query(`

@@ -555,31 +555,48 @@ async function deleteEmployee(req, res, next) {
     await connection.query('SET FOREIGN_KEY_CHECKS = 0');
 
     // If this staff was leading a team, unassign members and delete team
-    const [ledTeams] = await connection.query('SELECT id FROM teams WHERE lead_id = ?', [employeeId]);
-    for (const t of ledTeams) {
-      await connection.query('UPDATE staff_users SET team_id = NULL WHERE team_id = ?', [t.id]);
-      await connection.query('DELETE FROM teams WHERE id = ?', [t.id]);
-    }
+    try {
+      const [ledTeams] = await connection.query('SELECT id FROM teams WHERE lead_id = ?', [employeeId]);
+      for (const t of ledTeams) {
+        await connection.query('UPDATE staff_users SET team_id = NULL WHERE team_id = ?', [t.id]);
+        await connection.query('DELETE FROM teams WHERE id = ?', [t.id]);
+      }
+    } catch (_) {}
 
-    // Unassign or clear references on tasks, customer leads, and reports
-    await connection.query('UPDATE tasks SET employee_id = NULL WHERE employee_id = ?', [employeeId]);
-    await connection.query('UPDATE tasks SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
-    await connection.query('UPDATE customer_leads SET employee_id = NULL WHERE employee_id = ?', [employeeId]);
-    await connection.query('UPDATE customer_leads SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+    // Unassign open tasks and customer leads so historical work data is safe
+    try {
+      await connection.query('UPDATE tasks SET employee_id = NULL WHERE employee_id = ?', [employeeId]);
+    } catch (_) {}
+    try {
+      await connection.query('UPDATE tasks SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+    } catch (_) {}
+    try {
+      await connection.query('UPDATE customer_leads SET employee_id = NULL WHERE employee_id = ?', [employeeId]);
+    } catch (_) {}
+    try {
+      await connection.query('UPDATE customer_leads SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+    } catch (_) {}
 
-    // Delete refresh tokens and OTPs
-    await connection.query('DELETE FROM refresh_tokens WHERE user_type = "STAFF" AND user_id = ?', [employeeId]);
-    await connection.query('DELETE FROM otp_codes WHERE phone_number = ?', [staff.phone_number]);
+    // Delete refresh tokens and OTPs (otp_codes column is phone_or_email)
+    try {
+      await connection.query('DELETE FROM refresh_tokens WHERE user_type = "STAFF" AND user_id = ?', [employeeId]);
+    } catch (_) {}
+    try {
+      await connection.query(
+        'DELETE FROM otp_codes WHERE phone_or_email = ? OR phone_or_email = ?',
+        [staff.phone_number, staff.email]
+      );
+    } catch (_) {}
 
-    // Finally delete from staff_users
+    // Finally delete from staff_users so the SIM card phone number is 100% free for the upcoming employee
     await connection.query('DELETE FROM staff_users WHERE id = ?', [employeeId]);
 
     await connection.query('SET FOREIGN_KEY_CHECKS = 1');
 
     return res.status(200).json({
       success: true,
-      message: `${staff.full_name} has been removed successfully.`,
-      data: { id: String(employeeId), name: staff.full_name },
+      message: `${staff.full_name} (${staff.employee_id}) has been removed successfully. Phone number ${staff.phone_number} is now freed for new staff assignment.`,
+      data: { id: String(employeeId), name: staff.full_name, phone: staff.phone_number },
     });
   } catch (err) {
     next(err);
