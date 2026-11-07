@@ -71,7 +71,55 @@ async function updateConfigOptionList(req, res, next) {
   }
 }
 
+/**
+ * 41. POST /crm/admin/reset-early-data (MD only)
+ * Safely removes early test employees, coupons, customers, leads, tasks, and reports
+ * while keeping the main Admin account (LP-COMPANY / ADMIN) intact.
+ */
+async function resetEarlyTestData(req, res, next) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.query('SET FOREIGN_KEY_CHECKS = 0');
+
+    const [couponRes] = await connection.query('DELETE FROM `lucky_draw_coupons`');
+    const [custRes] = await connection.query('DELETE FROM `customers`');
+    const [leadRes] = await connection.query('DELETE FROM `customer_leads`');
+    const [taskRes] = await connection.query('DELETE FROM `tasks`');
+    const [reportRes] = await connection.query('DELETE FROM `work_reports`');
+    const [visitRes] = await connection.query('DELETE FROM `site_visits`');
+    const [teamRes] = await connection.query('DELETE FROM `teams`');
+    const [staffRes] = await connection.query(
+      "DELETE FROM `staff_users` WHERE role NOT IN ('ADMIN', 'SUPER_ADMIN') AND employee_id != 'LP-COMPANY'"
+    );
+    await connection.query('UPDATE `staff_users` SET `team_id` = NULL');
+    await connection.query('DELETE FROM `refresh_tokens`');
+    await connection.query('DELETE FROM `otp_codes`');
+
+    await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Early test data removed successfully. Coupons, customers, tasks, reports, and employees cleared.',
+      deleted: {
+        coupons: couponRes.affectedRows,
+        customers: custRes.affectedRows,
+        leads: leadRes.affectedRows,
+        tasks: taskRes.affectedRows,
+        reports: reportRes.affectedRows,
+        visits: visitRes.affectedRows,
+        teams: teamRes.affectedRows,
+        employees: staffRes.affectedRows,
+      },
+    });
+  } catch (err) {
+    next(err);
+  } finally {
+    connection.release();
+  }
+}
+
 module.exports = {
   getConfigOptions,
   updateConfigOptionList,
+  resetEarlyTestData,
 };

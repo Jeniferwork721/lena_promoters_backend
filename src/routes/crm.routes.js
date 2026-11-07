@@ -72,4 +72,9 @@ router.get('/performance/teams', requireMD, crmDashboard.getTeamPerformance);
 router.get('/config/options', crmConfig.getConfigOptions);
 router.put('/config/options/:list', requireMD, crmConfig.updateConfigOptionList);
 
+// ==========================================================
+// 10. ADMIN RESET EARLY DATA
+// ==========================================================
+router.post('/admin/reset-early-data', requireMD, crmConfig.resetEarlyTestData);
+
 module.exports = router;
