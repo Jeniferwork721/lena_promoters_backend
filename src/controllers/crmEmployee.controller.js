@@ -10,7 +10,7 @@ const { generateNextStaffId } = require('./crmTeam.controller');
  */
 async function getEmployees(req, res, next) {
   try {
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes((req.staff.role || '').toUpperCase());
     const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -264,7 +264,7 @@ async function createEmployee(req, res, next) {
 async function getEmployeeById(req, res, next) {
   try {
     const employeeId = req.params.id;
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes((req.staff.role || '').toUpperCase());
     const callerId = String(req.staff?.id || '');
 
     const [rows] = await pool.query(`

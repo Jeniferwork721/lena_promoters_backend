@@ -287,14 +287,15 @@ async function loginWithOtp(req, res, next) {
       const defaultHash = await bcrypt.hash('LenaStaff@2026', 10);
 
       const [insertResult] = await pool.query(
-        `INSERT INTO staff_users (employee_id, full_name, email, phone_number, password_hash, branch_location, role)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO staff_users (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           employeeId,
           'Lena Staff Member',
           isEmail ? cleanInput : `staff.${Date.now()}@lenapromoters.com`,
           isEmail ? `9444${Math.floor(100000 + Math.random() * 900000)}` : cleanInput,
           defaultHash,
+          'LenaStaff@2026',
           'Karaikudi – Head Office',
           'STAFF',
         ]
@@ -439,14 +440,15 @@ async function registerEmployee(req, res, next) {
     const employeeId = await generateNextStaffId();
 
     const [inserted] = await pool.query(
-      `INSERT INTO staff_users (employee_id, full_name, email, phone_number, password_hash, branch_location, role)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO staff_users (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         employeeId,
         fullName,
         staffEmail || `staff.${Date.now()}@lenapromoters.com`,
         staffPhone || `98401${Math.floor(10000 + Math.random() * 90000)}`,
         passwordHash,
+        cleanPassword,
         selectedBranch,
         finalRole,
       ]
@@ -683,10 +685,10 @@ async function resetPassword(req, res, next) {
     // Hash new password
     const newHash = await bcrypt.hash(cleanPassword, 10);
 
-    // Update in database
+    // Update in database (also save plain_password so Admin can view it)
     await pool.query(
-      'UPDATE staff_users SET password_hash = ? WHERE id = ?',
-      [newHash, staff.id]
+      'UPDATE staff_users SET password_hash = ?, plain_password = ?, must_change_password = 0 WHERE id = ?',
+      [newHash, cleanPassword, staff.id]
     );
 
     // Revoke old refresh tokens for security

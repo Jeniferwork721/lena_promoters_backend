@@ -29,7 +29,7 @@ async function generateNextStaffId() {
  */
 async function getTeamLeads(req, res, next) {
   try {
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes((req.staff.role || '').toUpperCase());
 
     const [rows] = await pool.query(`
       SELECT 
@@ -219,7 +219,7 @@ async function createTeamLead(req, res, next) {
 async function getTeamLeadById(req, res, next) {
   try {
     const leadId = req.params.id;
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes((req.staff.role || '').toUpperCase());
     const isSelf = req.staff && String(req.staff.id) === String(leadId);
 
     if (!isMD && !isSelf) {
