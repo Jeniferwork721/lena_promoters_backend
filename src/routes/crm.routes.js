@@ -28,7 +28,9 @@ router.get('/teams', requireMD, crmTeam.getTeams);
 router.get('/employees', crmEmployee.getEmployees);
 router.post('/employees', requireMD, crmEmployee.createEmployee);
 router.get('/employees/:id', crmEmployee.getEmployeeById);
+router.put('/employees/:id', requireMD, crmEmployee.updateEmployee);
 router.patch('/employees/:id/assignment', requireMD, crmEmployee.updateEmployeeAssignment);
+router.delete('/employees/:id', requireMD, crmEmployee.deleteEmployee);
 
 // ==========================================================
 // 5. CUSTOMER LEADS (Section 5: #20 to #25)

@@ -180,6 +180,8 @@ async function createEmployee(req, res, next) {
     let targetTeamId = teamId || null;
     let targetLeadId = leadId || null;
 
+    const isLeadCreation = ['LEAD', 'MANAGER'].includes(cleanRole);
+
     if (leadId && !targetTeamId) {
       const [leadTeam] = await pool.query('SELECT id FROM teams WHERE lead_id = ? LIMIT 1', [leadId]);
       if (leadTeam.length > 0) {
@@ -196,28 +198,40 @@ async function createEmployee(req, res, next) {
     const employeeId = await generateNextStaffId();
     const tempPassword = 'Lena@1234';
     const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const dbRole = isLeadCreation ? 'MANAGER' : 'TELECALLER';
 
     const [insertResult] = await pool.query(
       `INSERT INTO staff_users 
        (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, team_id, must_change_password)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, targetTeamId]
+      [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, dbRole, targetTeamId]
     );
     const newStaffId = insertResult.insertId;
 
+    // If created as Team Lead, create or link their team
+    if (isLeadCreation) {
+      const finalTeamName = String(req.body.teamName || `${cleanName}'s Team`).trim();
+      const [teamInsert] = await pool.query(
+        'INSERT INTO teams (name, lead_id) VALUES (?, ?)',
+        [finalTeamName, newStaffId]
+      );
+      targetTeamId = teamInsert.insertId;
+      await pool.query('UPDATE staff_users SET team_id = ? WHERE id = ?', [targetTeamId, newStaffId]);
+    }
+
     // Dispatch welcome email with credentials
-    await sendStaffWelcomeEmail(cleanEmail, cleanName, tempPassword, 'Employee', employeeId);
+    await sendStaffWelcomeEmail(cleanEmail, cleanName, tempPassword, isLeadCreation ? 'Team Lead' : 'Employee', employeeId);
 
     return res.status(201).json({
       success: true,
-      message: 'Employee created successfully. Welcome email dispatched.',
+      message: `${isLeadCreation ? 'Team Lead' : 'Employee'} created successfully. Welcome email dispatched.`,
       data: {
         id: String(newStaffId),
         employeeId,
         name: cleanName,
         phone: cleanPhone,
         email: cleanEmail,
-        role: 'employee',
+        role: isLeadCreation ? 'lead' : 'employee',
         teamId: targetTeamId ? String(targetTeamId) : null,
         leadId: targetLeadId ? String(targetLeadId) : null,
         hasAccount: true,
@@ -367,9 +381,191 @@ async function updateEmployeeAssignment(req, res, next) {
   }
 }
 
+/**
+ * PUT /employees/:id (MD only)
+ * Edit employee profile: full name, phone number, email, role/designation, team/lead assignment.
+ */
+async function updateEmployee(req, res, next) {
+  try {
+    const employeeId = req.params.id;
+    const { name, phone, email, role, leadId, teamName } = req.body;
+
+    const [empRows] = await pool.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [employeeId]);
+    if (empRows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found.' });
+    }
+    const currentEmp = empRows[0];
+
+    const cleanName = String(name || currentEmp.full_name || '').trim();
+    const cleanPhone = String(phone || currentEmp.phone_number || '').replace(/[^0-9]/g, '');
+    const cleanEmail = String(email || currentEmp.email || '').trim().toLowerCase();
+    const targetRole = String(role || (['MANAGER', 'LEAD'].includes((currentEmp.role || '').toUpperCase()) ? 'lead' : 'employee')).toLowerCase();
+    const isTargetLead = targetRole === 'lead';
+
+    if (!cleanName) {
+      return res.status(400).json({ success: false, message: 'Employee name is required.', errors: { name: 'Required' } });
+    }
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+      return res.status(400).json({ success: false, message: 'Valid 10-digit phone number starting with 6-9 is required.', errors: { phone: 'Invalid' } });
+    }
+
+    // Phone uniqueness check against OTHER staff members
+    const [phoneExists] = await pool.query(
+      'SELECT id FROM staff_users WHERE phone_number = ? AND id != ? LIMIT 1',
+      [cleanPhone, employeeId]
+    );
+    if (phoneExists.length > 0) {
+      return res.status(409).json({ success: false, message: 'Phone number is already registered with another staff member.', errors: { phone: 'Duplicate' } });
+    }
+
+    let finalTeamId = currentEmp.team_id;
+    let finalRole = isTargetLead ? 'MANAGER' : 'TELECALLER';
+
+    if (isTargetLead) {
+      // Promoting to or updating as Team Lead
+      const [teamRows] = await pool.query('SELECT id, name FROM teams WHERE lead_id = ? LIMIT 1', [employeeId]);
+      if (teamRows.length > 0) {
+        finalTeamId = teamRows[0].id;
+        if (teamName && teamName.trim()) {
+          await pool.query('UPDATE teams SET name = ? WHERE id = ?', [teamName.trim(), finalTeamId]);
+        }
+      } else {
+        // Create a new team for this lead
+        const finalTeamName = String(teamName || `${cleanName}'s Team`).trim();
+        const [insertTeam] = await pool.query(
+          'INSERT INTO teams (name, lead_id) VALUES (?, ?)',
+          [finalTeamName, employeeId]
+        );
+        finalTeamId = insertTeam.insertId;
+      }
+    } else {
+      // Setting as common employee / telecaller
+      // If was previously a lead of a team, clear lead_id on that team
+      await pool.query('UPDATE teams SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+
+      if (leadId) {
+        const [targetTeam] = await pool.query('SELECT id FROM teams WHERE lead_id = ? LIMIT 1', [leadId]);
+        finalTeamId = targetTeam.length > 0 ? targetTeam[0].id : null;
+      } else {
+        finalTeamId = null;
+      }
+    }
+
+    // Update staff_users
+    await pool.query(`
+      UPDATE staff_users 
+      SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?
+      WHERE id = ?
+    `, [cleanName, cleanPhone, cleanEmail, finalRole, finalTeamId, employeeId]);
+
+    // Fetch updated record with team details
+    const [updatedRows] = await pool.query(`
+      SELECT 
+        s.id,
+        s.employee_id as employeeId,
+        s.full_name as name,
+        s.phone_number as phone,
+        s.email,
+        s.role,
+        s.team_id as teamId,
+        t.name as teamName,
+        t.lead_id as leadId,
+        lead_user.full_name as leadName,
+        s.plain_password as password,
+        (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount
+      FROM staff_users s
+      LEFT JOIN teams t ON s.team_id = t.id
+      LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
+      WHERE s.id = ? LIMIT 1
+    `, [employeeId]);
+
+    const updated = updatedRows[0];
+    const isLeadResult = ['MANAGER', 'LEAD'].includes((updated.role || '').toUpperCase());
+
+    return res.status(200).json({
+      success: true,
+      message: 'Employee updated successfully.',
+      data: {
+        id: String(updated.id),
+        employeeId: updated.employeeId,
+        name: updated.name,
+        phone: updated.phone,
+        email: updated.email,
+        role: isLeadResult ? 'lead' : 'employee',
+        teamId: updated.teamId ? String(updated.teamId) : null,
+        teamName: updated.teamName || null,
+        leadId: updated.leadId ? String(updated.leadId) : null,
+        leadName: updated.leadName || null,
+        hasAccount: Boolean(updated.hasAccount),
+        password: updated.password || 'Lena@1234',
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * DELETE /employees/:id (MD only)
+ * Safely removes a staff member (employee or team lead).
+ */
+async function deleteEmployee(req, res, next) {
+  const connection = await pool.getConnection();
+  try {
+    const employeeId = req.params.id;
+
+    const [empRows] = await connection.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [employeeId]);
+    if (empRows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found.' });
+    }
+    const staff = empRows[0];
+
+    // Protect main Admin account
+    if (['ADMIN', 'SUPER_ADMIN'].includes((staff.role || '').toUpperCase()) || staff.employee_id === 'LP-COMPANY') {
+      return res.status(403).json({ success: false, message: 'Main Admin account cannot be deleted.' });
+    }
+
+    await connection.query('SET FOREIGN_KEY_CHECKS = 0');
+
+    // If this staff was leading a team, unassign members and delete team
+    const [ledTeams] = await connection.query('SELECT id FROM teams WHERE lead_id = ?', [employeeId]);
+    for (const t of ledTeams) {
+      await connection.query('UPDATE staff_users SET team_id = NULL WHERE team_id = ?', [t.id]);
+      await connection.query('DELETE FROM teams WHERE id = ?', [t.id]);
+    }
+
+    // Unassign or clear references on tasks, customer leads, and reports
+    await connection.query('UPDATE tasks SET employee_id = NULL WHERE employee_id = ?', [employeeId]);
+    await connection.query('UPDATE tasks SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+    await connection.query('UPDATE customer_leads SET employee_id = NULL WHERE employee_id = ?', [employeeId]);
+    await connection.query('UPDATE customer_leads SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+
+    // Delete refresh tokens and OTPs
+    await connection.query('DELETE FROM refresh_tokens WHERE user_type = "STAFF" AND user_id = ?', [employeeId]);
+    await connection.query('DELETE FROM otp_codes WHERE phone_number = ?', [staff.phone_number]);
+
+    // Finally delete from staff_users
+    await connection.query('DELETE FROM staff_users WHERE id = ?', [employeeId]);
+
+    await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+
+    return res.status(200).json({
+      success: true,
+      message: `${staff.full_name} has been removed successfully.`,
+      data: { id: String(employeeId), name: staff.full_name },
+    });
+  } catch (err) {
+    next(err);
+  } finally {
+    connection.release();
+  }
+}
+
 module.exports = {
   getEmployees,
   createEmployee,
   getEmployeeById,
   updateEmployeeAssignment,
+  updateEmployee,
+  deleteEmployee,
 };
