@@ -120,6 +120,21 @@ async function customerApply(req, res, next) {
     const cleanTransId = (paymentTransId || '').trim();
     const finalTransId = cleanTransId || 'UPI_RECEIPT_ATTACHED';
 
+    // Verify Payment Transaction ID uniqueness across coupons
+    if (cleanTransId && cleanTransId !== 'UPI_RECEIPT_ATTACHED' && cleanTransId !== 'CASH_PAYMENT') {
+      const [existingTrans] = await pool.query(
+        'SELECT coupon_number, customer_name FROM lucky_draw_coupons WHERE payment_trans_id = ? LIMIT 1',
+        [cleanTransId]
+      );
+      if (existingTrans.length > 0) {
+        return res.status(409).json({
+          success: false,
+          code: 'DUPLICATE_TRANSACTION_ID',
+          message: `Payment Transaction ID '${cleanTransId}' has already been registered for coupon ${existingTrans[0].coupon_number}. Please enter a valid, unique transaction ID.`,
+        });
+      }
+    }
+
     const quantity = Math.max(1, parseInt(req.body.quantity, 10) || 1);
     const freeCount = Math.floor(quantity / 10);
     const totalCount = quantity + freeCount;
@@ -641,6 +656,21 @@ async function staffDirectEntry(req, res, next) {
         success: false,
         message: 'Customer name, phone number, and address are required.',
       });
+    }
+
+    const cleanTransId = (paymentTransId || '').trim();
+    if (cleanTransId && cleanTransId !== 'UPI_RECEIPT_ATTACHED' && cleanTransId !== 'CASH_PAYMENT') {
+      const [existingTrans] = await pool.query(
+        'SELECT coupon_number, customer_name FROM lucky_draw_coupons WHERE payment_trans_id = ? LIMIT 1',
+        [cleanTransId]
+      );
+      if (existingTrans.length > 0) {
+        return res.status(409).json({
+          success: false,
+          code: 'DUPLICATE_TRANSACTION_ID',
+          message: `Payment Transaction ID '${cleanTransId}' has already been registered for coupon ${existingTrans[0].coupon_number}. Please enter a valid, unique transaction ID.`,
+        });
+      }
     }
 
     const activeEventId = await getActiveEventId();
