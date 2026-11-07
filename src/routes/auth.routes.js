@@ -2,20 +2,26 @@ const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/auth.controller');
 const branchController = require('../controllers/branch.controller');
-const { verifyStaffToken } = require('../middlewares/auth.middleware');
+const { verifyStaffToken, requireMD } = require('../middlewares/auth.middleware');
 
 // Public routes for staff login & registration
 router.post('/staff/login', authController.loginWithPassword);
+router.post('/login', authController.loginWithPassword);
 router.post('/staff/register', authController.registerEmployee);
+router.post('/register', authController.registerEmployee);
 router.post('/staff/register-password', authController.registerEmployee);
 router.post('/staff/create-password-with-otp', authController.registerEmployee);
 router.post('/staff/send-otp', authController.sendOtp);
+router.post('/send-otp', authController.sendOtp);
 router.post('/staff/verify-otp-login', authController.loginWithOtp);
 
 // Public routes for staff password recovery (Forgot Password)
 router.post('/staff/forgot-password', authController.forgotPassword);
+router.post('/forgot-password', authController.forgotPassword);
 router.post('/staff/verify-reset-otp', authController.verifyResetOtp);
+router.post('/verify-reset-otp', authController.verifyResetOtp);
 router.post('/staff/reset-password', authController.resetPassword);
+router.post('/reset-password', authController.resetPassword);
 router.get('/staff-directory', authController.getStaffDirectory);
 router.get('/branches', branchController.getBranches);
 
@@ -31,8 +37,12 @@ router.post('/customer/profile', authController.updateCustomerProfile);
 router.post('/refresh', authController.refreshAccessToken);
 router.post('/logout', authController.logout);
 
-// Authenticated staff route
-router.get('/staff/profile', verifyStaffToken, authController.getProfile);
+// Authenticated staff routes (CRM Section 2)
+router.get('/me', verifyStaffToken, authController.getMe);
+router.get('/staff/profile', verifyStaffToken, authController.getMe);
+router.post('/change-password', verifyStaffToken, authController.changePassword);
+router.delete('/staff/:staffId/account', verifyStaffToken, requireMD, authController.deleteStaffAccount);
+
 router.put('/staff/profile', authController.updateStaffProfile);
 router.post('/staff/profile', authController.updateStaffProfile);
 

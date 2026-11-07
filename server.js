@@ -20,11 +20,12 @@ app.use(express.urlencoded({ extended: true }));
 // Serve uploaded media statically (Receipts, Property Photos)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Mount API routes under /api/v1
+// Mount API routes under /api/v1 as well as root level for frontend compatibility
 app.use('/api/v1', routes);
+app.use('/', routes);
 
 // Root Welcome Route
-app.get('/', (req, res) => {
+app.get('/health-check', (req, res) => {
   res.json({
     status: 'online',
     project: 'Lena Promoters Mobile App Backend',

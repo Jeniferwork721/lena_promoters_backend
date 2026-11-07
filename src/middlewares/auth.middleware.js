@@ -36,19 +36,67 @@ function verifyStaffToken(req, res, next) {
 }
 
 /**
- * Middleware to require Admin role.
+ * Helper to determine user's app role: 'MD' | 'lead' | 'employee'
  */
-function requireAdminRole(req, res, next) {
-  if (!req.staff || req.staff.role !== 'ADMIN') {
+function getAppRole(role) {
+  if (!role) return 'employee';
+  const r = role.toUpperCase();
+  if (r === 'ADMIN' || r === 'SUPER_ADMIN') return 'MD';
+  if (r === 'MANAGER' || r === 'LEAD') return 'lead';
+  return 'employee';
+}
+
+/**
+ * Middleware to require Managing Director (ADMIN / SUPER_ADMIN) role.
+ */
+function requireMD(req, res, next) {
+  if (!req.staff) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required.',
+    });
+  }
+  const appRole = getAppRole(req.staff.role);
+  if (appRole !== 'MD') {
     return res.status(403).json({
       success: false,
-      message: 'Forbidden. Admin privileges required for this action.',
+      message: 'Forbidden. Managing Director (Admin) privileges required for this action.',
     });
   }
   next();
 }
 
+/**
+ * Middleware to require Team Lead (MANAGER) or MD role.
+ */
+function requireLeadOrMD(req, res, next) {
+  if (!req.staff) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required.',
+    });
+  }
+  const appRole = getAppRole(req.staff.role);
+  if (appRole !== 'MD' && appRole !== 'lead') {
+    return res.status(403).json({
+      success: false,
+      message: 'Forbidden. Team Lead or Admin privileges required for this action.',
+    });
+  }
+  next();
+}
+
+/**
+ * Middleware to require Admin role (alias for requireMD).
+ */
+function requireAdminRole(req, res, next) {
+  return requireMD(req, res, next);
+}
+
 module.exports = {
   verifyStaffToken,
   requireAdminRole,
+  requireMD,
+  requireLeadOrMD,
+  getAppRole,
 };

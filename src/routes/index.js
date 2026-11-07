@@ -7,6 +7,7 @@ const couponRoutes = require('./coupon.routes');
 const siteVisitRoutes = require('./siteVisit.routes');
 const uploadRoutes = require('./upload.routes');
 const branchRoutes = require('./branch.routes');
+const crmRoutes = require('./crm.routes');
 
 // Mount routes
 router.use('/auth', authRoutes);
@@ -15,6 +16,10 @@ router.use('/coupons', couponRoutes);
 router.use('/site-visits', siteVisitRoutes);
 router.use('/uploads', uploadRoutes);
 router.use('/branches', branchRoutes);
+
+// Mount CRM routes both at root and /crm namespace for full compatibility
+router.use('/', crmRoutes);
+router.use('/crm', crmRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {

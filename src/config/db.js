@@ -451,6 +451,149 @@ async function initializeDatabase() {
       console.log('🌱 Seeded active lucky draw scheme');
     }
 
+    // ==========================================================
+    // CRM DATABASE MODULE INITIALIZATION
+    // ==========================================================
+
+    // 10. Teams Table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`teams\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`name\` VARCHAR(150) NOT NULL UNIQUE,
+        \`lead_id\` INT NOT NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_team_lead\` (\`lead_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // 11. Staff Users Table Enhancements for CRM
+    try {
+      const [tIdCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'team_id'");
+      if (tIdCol.length === 0) {
+        await connection.query("ALTER TABLE `staff_users` ADD COLUMN `team_id` INT NULL AFTER `role`");
+      }
+      const [mcpCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'must_change_password'");
+      if (mcpCol.length === 0) {
+        await connection.query("ALTER TABLE `staff_users` ADD COLUMN `must_change_password` TINYINT(1) NOT NULL DEFAULT 0 AFTER `team_id`");
+      }
+      const [plainPassCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'plain_password'");
+      if (plainPassCol.length === 0) {
+        await connection.query("ALTER TABLE `staff_users` ADD COLUMN `plain_password` VARCHAR(255) NULL AFTER `password_hash`");
+      }
+      const [createdByCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'created_by'");
+      if (createdByCol.length === 0) {
+        await connection.query("ALTER TABLE `staff_users` ADD COLUMN `created_by` INT NULL AFTER `must_change_password`");
+      }
+    } catch (e) {
+      console.warn('Notice updating staff_users columns:', e.message);
+    }
+
+    // 12. Customer Leads Table (Sales Leads)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`customer_leads\` (
+        \`id\` VARCHAR(60) PRIMARY KEY,
+        \`name\` VARCHAR(150) NOT NULL,
+        \`phone\` VARCHAR(25) NOT NULL UNIQUE,
+        \`source\` VARCHAR(100) NULL,
+        \`project\` VARCHAR(150) NULL,
+        \`note\` TEXT NULL,
+        \`lead_id\` INT NULL,
+        \`employee_id\` INT NULL,
+        \`assigned_at\` DATETIME NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_lead_team\` (\`lead_id\`),
+        INDEX \`idx_lead_employee\` (\`employee_id\`),
+        INDEX \`idx_lead_phone\` (\`phone\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // 13. Tasks Table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`tasks\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`title\` VARCHAR(255) NOT NULL,
+        \`description\` TEXT NULL,
+        \`employee_id\` INT NOT NULL,
+        \`lead_id\` INT NOT NULL,
+        \`priority\` ENUM('Low', 'Medium', 'High') NOT NULL DEFAULT 'Medium',
+        \`status\` ENUM('Pending', 'Ongoing', 'Completed') NOT NULL DEFAULT 'Pending',
+        \`due_date\` DATE NOT NULL,
+        \`completed_at\` DATETIME NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_task_employee\` (\`employee_id\`),
+        INDEX \`idx_task_lead\` (\`lead_id\`),
+        INDEX \`idx_task_status\` (\`status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // 14. Work Reports Table (Post-call Entries)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`work_reports\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`employee_id\` INT NOT NULL,
+        \`customer_lead_id\` VARCHAR(60) NULL,
+        \`report_date\` DATE NOT NULL,
+        \`task_desc\` VARCHAR(255) NULL,
+        \`customer_name\` VARCHAR(150) NOT NULL,
+        \`contact_phone\` VARCHAR(25) NOT NULL,
+        \`whatsapp_phone\` VARCHAR(25) NOT NULL,
+        \`source\` VARCHAR(100) NOT NULL,
+        \`call_type\` VARCHAR(100) NOT NULL,
+        \`call_status\` VARCHAR(100) NOT NULL,
+        \`call_time\` VARCHAR(10) NULL,
+        \`call_duration\` INT NULL DEFAULT 0,
+        \`call_notes\` TEXT NULL,
+        \`project\` VARCHAR(150) NULL,
+        \`offer\` VARCHAR(150) NULL,
+        \`property_type\` VARCHAR(100) NULL,
+        \`purpose\` VARCHAR(100) NULL,
+        \`payment\` VARCHAR(100) NULL,
+        \`plot\` VARCHAR(100) NULL,
+        \`budget\` VARCHAR(100) NULL,
+        \`stage\` VARCHAR(100) NULL,
+        \`qualification\` VARCHAR(50) NULL,
+        \`follow_up_date\` DATE NULL,
+        \`site_visit\` VARCHAR(50) NOT NULL DEFAULT 'Not Planned',
+        \`work_status\` VARCHAR(50) NOT NULL DEFAULT 'Pending',
+        \`requirement\` TEXT NULL,
+        \`next_action\` VARCHAR(100) NOT NULL,
+        \`remarks\` TEXT NULL,
+        \`calls\` INT NOT NULL DEFAULT 1,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_rep_emp_date\` (\`employee_id\`, \`report_date\`),
+        INDEX \`idx_rep_cust_lead\` (\`customer_lead_id\`),
+        INDEX \`idx_rep_call_status\` (\`call_status\`),
+        INDEX \`idx_rep_followup\` (\`follow_up_date\`, \`work_status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // 15. Config Options Table (Dropdown lists & reference data)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`config_options\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`list_name\` VARCHAR(100) NOT NULL UNIQUE,
+        \`list_values\` JSON NOT NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // Seed Config Options from DEFAULT_CRM_OPTIONS
+    const { DEFAULT_CRM_OPTIONS } = require('./crmOptions');
+    for (const [key, values] of Object.entries(DEFAULT_CRM_OPTIONS)) {
+      await connection.query(
+        `INSERT INTO \`config_options\` (\`list_name\`, \`list_values\`)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE \`list_name\` = VALUES(\`list_name\`)`,
+        [key, JSON.stringify(values)]
+      );
+    }
+    console.log('📋 Synced CRM reference data dropdown options to DB');
+
     // Note: Mock coupon seeding disabled to retain only real applicant and verified coupon entries.
 
   } catch (err) {

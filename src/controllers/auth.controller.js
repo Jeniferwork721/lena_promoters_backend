@@ -109,6 +109,18 @@ async function loginWithPassword(req, res, next) {
       });
     }
 
+    // Fetch team name if team_id is set
+    let teamName = null;
+    if (staff.team_id) {
+      const [teamRows] = await pool.query('SELECT name FROM teams WHERE id = ? LIMIT 1', [staff.team_id]);
+      if (teamRows.length > 0) {
+        teamName = teamRows[0].name;
+      }
+    }
+
+    const { getAppRole } = require('../middlewares/auth.middleware');
+    const appRole = getAppRole(staff.role);
+
     // Generate JWT access & refresh tokens
     const { token, refreshToken } = await issueTokens(staff, 'STAFF');
 
@@ -125,6 +137,10 @@ async function loginWithPassword(req, res, next) {
         phone: staff.phone_number,
         branch: staff.branch_location,
         role: staff.role,
+        appRole,
+        teamId: staff.team_id || null,
+        teamName,
+        mustChangePassword: Boolean(staff.must_change_password),
       },
     });
   } catch (err) {
@@ -1434,6 +1450,151 @@ async function updateStaffProfile(req, res, next) {
   }
 }
 
+/**
+ * 12. GET /auth/me (#9)
+ * Returns the signed-in staff object plus teamId, teamName, and appRole
+ */
+async function getMe(req, res, next) {
+  try {
+    const staffId = req.staff?.id;
+    if (!staffId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT s.id, s.employee_id, s.full_name, s.email, s.phone_number, s.branch_location,
+              s.role, s.team_id, s.must_change_password, t.name as team_name
+       FROM staff_users s
+       LEFT JOIN teams t ON s.team_id = t.id
+       WHERE s.id = ? AND s.is_active = 1 LIMIT 1`,
+      [staffId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Staff profile not found.' });
+    }
+
+    const staff = rows[0];
+    const { getAppRole } = require('../middlewares/auth.middleware');
+    const appRole = getAppRole(staff.role);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        id: staff.id,
+        employeeId: staff.employee_id,
+        fullName: staff.full_name,
+        name: staff.full_name,
+        email: staff.email,
+        phone: staff.phone_number,
+        branch: staff.branch_location,
+        role: staff.role,
+        appRole,
+        teamId: staff.team_id || null,
+        teamName: staff.team_name || null,
+        mustChangePassword: Boolean(staff.must_change_password),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 13. POST /auth/change-password (#10)
+ * Allows signed-in staff to set permanent password (or change existing).
+ * Also updates plain_password so Admin can view it.
+ */
+async function changePassword(req, res, next) {
+  try {
+    const staffId = req.staff?.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!newPassword || newPassword.trim().length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 8 characters long.',
+        errors: { newPassword: 'Minimum 8 characters required' },
+      });
+    }
+
+    // Enforce at least one letter and one number
+    if (!/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must contain at least one letter and one number.',
+        errors: { newPassword: 'Must contain at least one letter and one number' },
+      });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [staffId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Staff member not found.' });
+    }
+
+    const staff = rows[0];
+
+    // If current password provided, verify it (unless must_change_password = 1)
+    if (currentPassword && !staff.must_change_password) {
+      const isMatch = await bcrypt.compare(currentPassword, staff.password_hash);
+      if (!isMatch) {
+        return res.status(400).json({
+          success: false,
+          message: 'Incorrect current password.',
+          errors: { currentPassword: 'Password does not match' },
+        });
+      }
+    }
+
+    const newHash = await bcrypt.hash(newPassword.trim(), 10);
+    await pool.query(
+      `UPDATE staff_users 
+       SET password_hash = ?, plain_password = ?, must_change_password = 0 
+       WHERE id = ?`,
+      [newHash, newPassword.trim(), staffId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password changed successfully. Your permanent password is now active.',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 14. DELETE /staff/:staffId/account (#11)
+ * MD only. Clears staff member's login credentials while retaining work data.
+ */
+async function deleteStaffAccount(req, res, next) {
+  try {
+    const staffId = req.params.staffId;
+    if (!staffId) {
+      return res.status(400).json({ success: false, message: 'Staff ID is required.' });
+    }
+
+    const [rows] = await pool.query('SELECT id, full_name FROM staff_users WHERE id = ? LIMIT 1', [staffId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Staff member not found.' });
+    }
+
+    await pool.query(
+      `UPDATE staff_users 
+       SET password_hash = '', plain_password = NULL, must_change_password = 1 
+       WHERE id = ?`,
+      [staffId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Login account for ${rows[0].full_name} removed. Work reports, tasks, and leads have been preserved.`,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   loginWithPassword,
   sendOtp,
@@ -1444,6 +1605,9 @@ module.exports = {
   verifyResetOtp,
   resetPassword,
   getProfile,
+  getMe,
+  changePassword,
+  deleteStaffAccount,
   getStaffDirectory,
   sendCustomerOtp,
   loginCustomerWithOtp,

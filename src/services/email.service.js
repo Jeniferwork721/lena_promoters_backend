@@ -134,6 +134,116 @@ async function sendEmailOtp(toEmail, otp, purpose = 'STAFF_LOGIN') {
   }
 }
 
+/**
+ * Send welcome email to a new staff member with their email and temporary password.
+ *
+ * @param {string} toEmail - Staff email address
+ * @param {string} fullName - Staff name
+ * @param {string} temporaryPassword - Temporary password (e.g. Lena@1234)
+ * @param {string} roleName - Display role (e.g. 'Team Lead', 'Employee')
+ * @param {string} employeeId - Generated employee ID (e.g. 'LP-EMP-105')
+ */
+async function sendStaffWelcomeEmail(toEmail, fullName, temporaryPassword = 'Lena@1234', roleName = 'Staff', employeeId = '') {
+  const transporter = getTransporter();
+
+  if (!transporter) {
+    console.log(
+      `⚠️ [Email Gateway] EMAIL_USER / EMAIL_PASS not configured in .env. ` +
+      `Welcome email skipped. Credentials for ${toEmail}: Password: ${temporaryPassword}`
+    );
+    return {
+      success: true,
+      isLiveEmail: false,
+      message: 'Email credentials not configured in .env.',
+    };
+  }
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f6f8fb; margin: 0; padding: 24px; }
+        .container { max-width: 520px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
+        .header { background: linear-gradient(135deg, #0A1627, #142B4A); padding: 28px 24px; text-align: center; }
+        .header h1 { color: #C89B3C; margin: 0 0 6px 0; font-size: 22px; letter-spacing: 0.5px; }
+        .header p { color: #E8EEF5; margin: 0; font-size: 13px; opacity: 0.9; }
+        .body { padding: 28px 24px; color: #1e293b; }
+        .cred-box { background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 18px 20px; margin: 20px 0; }
+        .cred-row { margin-bottom: 12px; font-size: 14px; }
+        .cred-row:last-child { margin-bottom: 0; }
+        .cred-label { font-weight: 600; color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+        .cred-val { font-size: 16px; font-weight: 700; color: #0f172a; font-family: monospace; }
+        .footer { background: #f8fafc; padding: 16px 20px; text-align: center; font-size: 11.5px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>LENA PROMOTERS CRM</h1>
+          <p>Welcome to the Team</p>
+        </div>
+        <div class="body">
+          <p style="font-size: 15px; margin: 0 0 14px 0; color: #334155;">Hello <strong>${fullName || 'Team Member'}</strong>,</p>
+          <p style="font-size: 14px; line-height: 1.5; color: #475569; margin: 0 0 16px 0;">
+            Your account has been created for Lena Promoters CRM. This is your email and your temporary password:
+          </p>
+          <div class="cred-box">
+            ${employeeId ? `
+            <div class="cred-row">
+              <div class="cred-label">Employee ID</div>
+              <div class="cred-val">${employeeId}</div>
+            </div>` : ''}
+            <div class="cred-row">
+              <div class="cred-label">Email Address</div>
+              <div class="cred-val">${toEmail}</div>
+            </div>
+            <div class="cred-row">
+              <div class="cred-label">Temporary Password</div>
+              <div class="cred-val" style="color: #0284c7;">${temporaryPassword}</div>
+            </div>
+          </div>
+          <p style="font-size: 13.5px; color: #64748b; line-height: 1.6; margin: 0;">
+            Please log in to the Lena Promoters mobile app or web portal using this temporary password and set your permanent password.
+          </p>
+        </div>
+        <div class="footer">
+          &copy; ${new Date().getFullYear()} Lena Promoters Pvt Ltd. All rights reserved.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const senderUser = process.env.EMAIL_USER;
+  const mailOptions = {
+    from: `"Lena Promoters CRM" <${senderUser}>`,
+    to: toEmail,
+    subject: `Your Lena Promoters CRM Login Credentials`,
+    text: `Hello ${fullName},\n\nYour account has been created for Lena Promoters CRM.\n\nEmail: ${toEmail}\nUsername/Employee ID: ${employeeId}\nTemporary Password: ${temporaryPassword}\n\nPlease log in to the Lena Promoters mobile app or web portal and set your permanent password.`,
+    html: htmlContent,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`✅ [Email Gateway] Welcome email delivered to ${toEmail}. Message ID: ${info.messageId}`);
+    return {
+      success: true,
+      isLiveEmail: true,
+      message: `Login credentials sent to ${toEmail}.`,
+    };
+  } catch (err) {
+    console.error(`❌ [Email Gateway] Failed to send welcome email to ${toEmail}:`, err.message);
+    return {
+      success: false,
+      isLiveEmail: false,
+      message: `Failed to deliver welcome email: ${err.message}`,
+    };
+  }
+}
+
 module.exports = {
   sendEmailOtp,
+  sendStaffWelcomeEmail,
 };
