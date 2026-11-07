@@ -36,13 +36,15 @@ function verifyStaffToken(req, res, next) {
 }
 
 /**
- * Helper to determine user's app role: 'MD' | 'lead' | 'employee'
+ * Helper to determine user's app role: 'MD' | 'lead' | 'employee' | 'coupon_head' | 'hr'
  */
 function getAppRole(role) {
   if (!role) return 'employee';
   const r = role.toUpperCase();
-  if (r === 'ADMIN' || r === 'SUPER_ADMIN') return 'MD';
-  if (r === 'MANAGER' || r === 'LEAD') return 'lead';
+  if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD') return 'MD';
+  if (r === 'MANAGER' || r === 'LEAD' || r === 'TEAM_LEAD' || r === 'SALES_MANAGER' || r === 'SALES_HEAD' || r === 'HEAD_MANAGER') return 'lead';
+  if (r === 'COUPON_HEAD' || r === 'COUPON_MANAGER') return 'coupon_head';
+  if (r === 'HR' || r === 'HUMAN_RESOURCES') return 'hr';
   return 'employee';
 }
 
@@ -87,6 +89,23 @@ function requireLeadOrMD(req, res, next) {
 }
 
 /**
+ * Middleware to require Coupon Head or Admin role.
+ */
+function requireCouponHeadOrAdmin(req, res, next) {
+  if (!req.staff) {
+    return res.status(401).json({ success: false, message: 'Authentication required.' });
+  }
+  const r = (req.staff.role || '').toUpperCase();
+  if (!['ADMIN', 'SUPER_ADMIN', 'MD', 'COUPON_HEAD', 'COUPON_MANAGER'].includes(r)) {
+    return res.status(403).json({
+      success: false,
+      message: 'Forbidden. Coupon Head or Admin privileges required.',
+    });
+  }
+  next();
+}
+
+/**
  * Middleware to require Admin role (alias for requireMD).
  */
 function requireAdminRole(req, res, next) {
@@ -98,5 +117,6 @@ module.exports = {
   requireAdminRole,
   requireMD,
   requireLeadOrMD,
+  requireCouponHeadOrAdmin,
   getAppRole,
 };

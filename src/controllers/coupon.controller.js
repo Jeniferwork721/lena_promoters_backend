@@ -892,10 +892,11 @@ async function startNewEvent(req, res, next) {
     const { eventTitle, bumperPrize, assuredGift, entryFee } = req.body;
     const staff = req.staff;
 
-    if (staff && staff.role !== 'ADMIN' && staff.role !== 'MANAGER') {
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'COUPON_HEAD', 'HEAD_MANAGER'];
+    if (staff && !allowedRoles.includes((staff.role || '').toUpperCase())) {
       return res.status(403).json({
         success: false,
-        message: 'Only Admin or Manager can start a new Lucky Draw season.',
+        message: 'Only Admin or Coupon Head can start a new Lucky Draw season.',
       });
     }
 
@@ -970,10 +971,11 @@ async function endEvent(req, res, next) {
     const { purgeReceipts, winnerCoupon } = req.body;
     const staff = req.staff;
 
-    if (staff && staff.role !== 'ADMIN' && staff.role !== 'MANAGER') {
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'COUPON_HEAD', 'HEAD_MANAGER'];
+    if (staff && !allowedRoles.includes((staff.role || '').toUpperCase())) {
       return res.status(403).json({
         success: false,
-        message: 'Only Admin or Manager can end a Lucky Draw season.',
+        message: 'Only Admin or Coupon Head can end a Lucky Draw season.',
       });
     }
 
@@ -1121,6 +1123,99 @@ async function listEvents(req, res, next) {
   }
 }
 
+/**
+ * 14. Comprehensive Coupon Reports (For Coupon Head & Admin)
+ * Returns metrics, staff-wise breakdown, branch breakdown, and season/month performance
+ */
+async function getCouponReports(req, res, next) {
+  try {
+    const { eventId } = req.query;
+    let eventFilter = '';
+    const params = [];
+    if (eventId && eventId !== 'ALL') {
+      eventFilter = ' WHERE event_id = ?';
+      params.push(parseInt(eventId, 10));
+    }
+
+    // 1. Overall Totals
+    const [summaryRows] = await pool.query(`
+      SELECT 
+        COUNT(*) as totalEntries,
+        SUM(CASE WHEN status = 'PENDING_STAFF_VERIFICATION' THEN 1 ELSE 0 END) as pendingCount,
+        SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN 1 ELSE 0 END) as verifiedCount,
+        SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejectedCount,
+        SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN entry_fee ELSE 0 END) as totalCollected
+      FROM lucky_draw_coupons
+      ${eventFilter}
+    `, params);
+
+    const summary = {
+      totalEntries: parseInt(summaryRows[0]?.totalEntries || 0, 10),
+      pendingCount: parseInt(summaryRows[0]?.pendingCount || 0, 10),
+      verifiedCount: parseInt(summaryRows[0]?.verifiedCount || 0, 10),
+      rejectedCount: parseInt(summaryRows[0]?.rejectedCount || 0, 10),
+      totalCollected: parseFloat(summaryRows[0]?.totalCollected || 0),
+    };
+
+    // 2. Staff-wise Breakdown
+    const [staffBreakdown] = await pool.query(`
+      SELECT 
+        COALESCE(c.staff_name, 'Direct / Online') as staffName,
+        COALESCE(c.staff_id, 'ONLINE') as staffId,
+        COALESCE(s.branch_location, 'Head Office / Direct') as branch,
+        COUNT(*) as totalEntered,
+        SUM(CASE WHEN c.status = 'VERIFIED_AND_PAID' THEN 1 ELSE 0 END) as verifiedCount,
+        SUM(CASE WHEN c.status = 'PENDING_STAFF_VERIFICATION' THEN 1 ELSE 0 END) as pendingCount,
+        SUM(CASE WHEN c.status = 'REJECTED' THEN 1 ELSE 0 END) as rejectedCount,
+        SUM(CASE WHEN c.status = 'VERIFIED_AND_PAID' THEN c.entry_fee ELSE 0 END) as collectedAmount
+      FROM lucky_draw_coupons c
+      LEFT JOIN staff_users s ON (c.staff_id = s.employee_id OR c.staff_name = s.full_name)
+      ${eventFilter}
+      GROUP BY c.staff_name, c.staff_id, s.branch_location
+      ORDER BY totalEntered DESC
+    `, params);
+
+    // 3. Branch-wise Breakdown
+    const [branchBreakdown] = await pool.query(`
+      SELECT 
+        COALESCE(s.branch_location, 'Head Office / Direct') as branch,
+        COUNT(*) as totalCoupons,
+        SUM(CASE WHEN c.status = 'VERIFIED_AND_PAID' THEN 1 ELSE 0 END) as verifiedCoupons,
+        SUM(CASE WHEN c.status = 'VERIFIED_AND_PAID' THEN c.entry_fee ELSE 0 END) as collectedAmount
+      FROM lucky_draw_coupons c
+      LEFT JOIN staff_users s ON (c.staff_id = s.employee_id OR c.staff_name = s.full_name)
+      ${eventFilter}
+      GROUP BY s.branch_location
+      ORDER BY totalCoupons DESC
+    `, params);
+
+    // 4. Seasons / Months List
+    let seasons = [];
+    try {
+      const [allSeasons] = await pool.query('SELECT * FROM lucky_draw_events ORDER BY id DESC');
+      seasons = allSeasons;
+    } catch (_) {}
+
+    return res.status(200).json({
+      success: true,
+      summary,
+      staffBreakdown,
+      branchBreakdown,
+      seasons: seasons.map(s => ({
+        id: s.id,
+        eventCode: s.event_code,
+        eventTitle: s.event_title,
+        startDate: s.start_date,
+        endDate: s.end_date,
+        bumperPrize: s.bumper_prize,
+        status: s.status,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getActiveScheme,
   customerApply,
@@ -1135,4 +1230,5 @@ module.exports = {
   endEvent,
   purgeEventReceipts,
   listEvents,
+  getCouponReports,
 };

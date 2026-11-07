@@ -15,7 +15,8 @@ router.put('/staff/:id/edit-and-verify', verifyStaffToken, couponController.staf
 router.put('/staff/:id/reject', verifyStaffToken, couponController.staffRejectCoupon);
 router.post('/staff/direct-entry', verifyStaffToken, couponController.staffDirectEntry);
 
-// Recurring Events / Season Management (Admin / Manager)
+// Recurring Events / Season Management (Admin / Coupon Head / Manager)
+router.get('/reports/summary', verifyStaffToken, couponController.getCouponReports);
 router.get('/events/active', verifyStaffToken, couponController.getActiveEvent);
 router.get('/events/list', verifyStaffToken, couponController.listEvents);
 router.post('/events/new', verifyStaffToken, couponController.startNewEvent);

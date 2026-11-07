@@ -87,7 +87,8 @@ async function getEmployees(req, res, next) {
       name: r.name,
       phone: r.phone,
       email: r.email,
-      role: 'employee',
+      role: r.role || 'employee',
+      designation: r.designation || r.role || 'Sales Executive',
       branch: r.branch || 'Karaikudi – Head Office',
       teamId: r.teamId ? String(r.teamId) : null,
       teamName: r.teamName || null,
@@ -119,7 +120,7 @@ async function getEmployees(req, res, next) {
  */
 async function createEmployee(req, res, next) {
   try {
-    const { name, phone, email, leadId, teamId, role, branch } = req.body;
+    const { name, phone, email, leadId, teamId, role, designation, branch } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -141,7 +142,8 @@ async function createEmployee(req, res, next) {
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     const cleanEmail = email ? email.trim() : `${cleanPhone}@lenapromoters.com`;
     const cleanBranch = branch ? branch.trim() : 'Karaikudi – Head Office';
-    const cleanRole = role ? role.trim().toUpperCase() : 'TELECALLER';
+    const cleanRole = role ? role.trim().toUpperCase() : 'SALES_EXECUTIVE';
+    const cleanDesignation = (designation || role || 'Sales Executive').trim();
 
     // Phone format check: 10 digits starting with 6-9
     if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
@@ -182,7 +184,7 @@ async function createEmployee(req, res, next) {
     let targetTeamId = teamId || null;
     let targetLeadId = leadId || null;
 
-    const isLeadCreation = ['LEAD', 'MANAGER'].includes(cleanRole);
+    const isLeadCreation = ['LEAD', 'MANAGER', 'TEAM_LEAD', 'SALES_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER'].includes(cleanRole);
 
     if (leadId && !targetTeamId) {
       const [leadTeam] = await pool.query('SELECT id FROM teams WHERE lead_id = ? LIMIT 1', [leadId]);
@@ -200,14 +202,23 @@ async function createEmployee(req, res, next) {
     const employeeId = await generateNextStaffId();
     const tempPassword = 'Lena@1234';
     const passwordHash = await bcrypt.hash(tempPassword, 10);
-    const dbRole = isLeadCreation ? 'MANAGER' : 'TELECALLER';
 
-    const [insertResult] = await pool.query(
-      `INSERT INTO staff_users 
-       (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, team_id, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, dbRole, targetTeamId]
-    );
+    let insertResult;
+    try {
+      [insertResult] = await pool.query(
+        `INSERT INTO staff_users 
+         (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, team_id, must_change_password)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, targetTeamId]
+      );
+    } catch (_) {
+      [insertResult] = await pool.query(
+        `INSERT INTO staff_users 
+         (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, team_id, must_change_password)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, targetTeamId]
+      );
+    }
     const newStaffId = insertResult.insertId;
 
     // If created as Team Lead, create or link their team
@@ -222,18 +233,19 @@ async function createEmployee(req, res, next) {
     }
 
     // Dispatch welcome email with credentials
-    await sendStaffWelcomeEmail(cleanEmail, cleanName, tempPassword, isLeadCreation ? 'Team Lead' : 'Employee', employeeId);
+    await sendStaffWelcomeEmail(cleanEmail, cleanName, tempPassword, cleanDesignation || (isLeadCreation ? 'Team Lead' : 'Employee'), employeeId);
 
     return res.status(201).json({
       success: true,
-      message: `${isLeadCreation ? 'Team Lead' : 'Employee'} created successfully. Welcome email dispatched.`,
+      message: `${cleanDesignation} (${cleanName}) created successfully. Welcome email dispatched.`,
       data: {
         id: String(newStaffId),
         employeeId,
         name: cleanName,
         phone: cleanPhone,
         email: cleanEmail,
-        role: isLeadCreation ? 'lead' : 'employee',
+        role: cleanRole,
+        designation: cleanDesignation,
         branch: cleanBranch,
         teamId: targetTeamId ? String(targetTeamId) : null,
         leadId: targetLeadId ? String(targetLeadId) : null,
@@ -403,8 +415,9 @@ async function updateEmployee(req, res, next) {
     const cleanPhone = String(phone || currentEmp.phone_number || '').replace(/[^0-9]/g, '');
     const cleanEmail = String(email || currentEmp.email || '').trim().toLowerCase();
     const cleanBranch = String(branch || currentEmp.branch_location || 'Karaikudi – Head Office').trim();
-    const targetRole = String(role || (['MANAGER', 'LEAD'].includes((currentEmp.role || '').toUpperCase()) ? 'lead' : 'employee')).toLowerCase();
-    const isTargetLead = targetRole === 'lead';
+    const cleanRole = String(role || currentEmp.role || 'SALES_EXECUTIVE').trim().toUpperCase();
+    const cleanDesignation = String(designation || role || currentEmp.designation || currentEmp.role || 'Sales Executive').trim();
+    const isTargetLead = ['MANAGER', 'LEAD', 'TEAM_LEAD', 'SALES_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER'].includes(cleanRole);
 
     if (!cleanName) {
       return res.status(400).json({ success: false, message: 'Employee name is required.', errors: { name: 'Required' } });
@@ -423,7 +436,7 @@ async function updateEmployee(req, res, next) {
     }
 
     let finalTeamId = currentEmp.team_id;
-    let finalRole = isTargetLead ? 'MANAGER' : 'TELECALLER';
+    let finalRole = cleanRole;
 
     if (isTargetLead) {
       // Promoting to or updating as Team Lead
@@ -443,7 +456,7 @@ async function updateEmployee(req, res, next) {
         finalTeamId = insertTeam.insertId;
       }
     } else {
-      // Setting as common employee / telecaller
+      // Setting as common employee / telecaller / other role
       // If was previously a lead of a team, clear lead_id on that team
       await pool.query('UPDATE teams SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
 
@@ -456,11 +469,19 @@ async function updateEmployee(req, res, next) {
     }
 
     // Update staff_users
-    await pool.query(`
-      UPDATE staff_users 
-      SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?, branch_location = ?
-      WHERE id = ?
-    `, [cleanName, cleanPhone, cleanEmail, finalRole, finalTeamId, cleanBranch, employeeId]);
+    try {
+      await pool.query(`
+        UPDATE staff_users 
+        SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, team_id = ?, branch_location = ?
+        WHERE id = ?
+      `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, finalTeamId, cleanBranch, employeeId]);
+    } catch (_) {
+      await pool.query(`
+        UPDATE staff_users 
+        SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?, branch_location = ?
+        WHERE id = ?
+      `, [cleanName, cleanPhone, cleanEmail, finalRole, finalTeamId, cleanBranch, employeeId]);
+    }
 
     // Fetch updated record with team details
     const [updatedRows] = await pool.query(`
@@ -485,18 +506,18 @@ async function updateEmployee(req, res, next) {
     `, [employeeId]);
 
     const updated = updatedRows[0];
-    const isLeadResult = ['MANAGER', 'LEAD'].includes((updated.role || '').toUpperCase());
 
     return res.status(200).json({
       success: true,
-      message: 'Employee updated successfully.',
+      message: 'Staff profile updated successfully.',
       data: {
         id: String(updated.id),
         employeeId: updated.employeeId,
         name: updated.name,
         phone: updated.phone,
         email: updated.email,
-        role: isLeadResult ? 'lead' : 'employee',
+        role: updated.role,
+        designation: cleanDesignation,
         branch: updated.branch || cleanBranch,
         teamId: updated.teamId ? String(updated.teamId) : null,
         teamName: updated.teamName || null,

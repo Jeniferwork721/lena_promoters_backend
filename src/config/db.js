@@ -485,6 +485,10 @@ async function initializeDatabase() {
       if (createdByCol.length === 0) {
         await connection.query("ALTER TABLE `staff_users` ADD COLUMN `created_by` INT NULL AFTER `must_change_password`");
       }
+      const [desigCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'designation'");
+      if (desigCol.length === 0) {
+        await connection.query("ALTER TABLE `staff_users` ADD COLUMN `designation` VARCHAR(150) NULL AFTER `role`");
+      }
     } catch (e) {
       console.warn('Notice updating staff_users columns:', e.message);
     }
