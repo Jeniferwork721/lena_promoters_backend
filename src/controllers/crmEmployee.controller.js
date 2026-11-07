@@ -65,6 +65,7 @@ async function getEmployees(req, res, next) {
         s.phone_number as phone,
         s.email,
         s.role,
+        s.branch_location as branch,
         s.team_id as teamId,
         t.name as teamName,
         t.lead_id as leadId,
@@ -87,6 +88,7 @@ async function getEmployees(req, res, next) {
       phone: r.phone,
       email: r.email,
       role: 'employee',
+      branch: r.branch || 'Karaikudi – Head Office',
       teamId: r.teamId ? String(r.teamId) : null,
       teamName: r.teamName || null,
       leadId: r.leadId ? String(r.leadId) : null,
@@ -232,6 +234,7 @@ async function createEmployee(req, res, next) {
         phone: cleanPhone,
         email: cleanEmail,
         role: isLeadCreation ? 'lead' : 'employee',
+        branch: cleanBranch,
         teamId: targetTeamId ? String(targetTeamId) : null,
         leadId: targetLeadId ? String(targetLeadId) : null,
         hasAccount: true,
@@ -388,7 +391,7 @@ async function updateEmployeeAssignment(req, res, next) {
 async function updateEmployee(req, res, next) {
   try {
     const employeeId = req.params.id;
-    const { name, phone, email, role, leadId, teamName } = req.body;
+    const { name, phone, email, role, leadId, teamName, branch } = req.body;
 
     const [empRows] = await pool.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [employeeId]);
     if (empRows.length === 0) {
@@ -399,6 +402,7 @@ async function updateEmployee(req, res, next) {
     const cleanName = String(name || currentEmp.full_name || '').trim();
     const cleanPhone = String(phone || currentEmp.phone_number || '').replace(/[^0-9]/g, '');
     const cleanEmail = String(email || currentEmp.email || '').trim().toLowerCase();
+    const cleanBranch = String(branch || currentEmp.branch_location || 'Karaikudi – Head Office').trim();
     const targetRole = String(role || (['MANAGER', 'LEAD'].includes((currentEmp.role || '').toUpperCase()) ? 'lead' : 'employee')).toLowerCase();
     const isTargetLead = targetRole === 'lead';
 
@@ -454,9 +458,9 @@ async function updateEmployee(req, res, next) {
     // Update staff_users
     await pool.query(`
       UPDATE staff_users 
-      SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?
+      SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?, branch_location = ?
       WHERE id = ?
-    `, [cleanName, cleanPhone, cleanEmail, finalRole, finalTeamId, employeeId]);
+    `, [cleanName, cleanPhone, cleanEmail, finalRole, finalTeamId, cleanBranch, employeeId]);
 
     // Fetch updated record with team details
     const [updatedRows] = await pool.query(`
@@ -467,6 +471,7 @@ async function updateEmployee(req, res, next) {
         s.phone_number as phone,
         s.email,
         s.role,
+        s.branch_location as branch,
         s.team_id as teamId,
         t.name as teamName,
         t.lead_id as leadId,
@@ -492,6 +497,7 @@ async function updateEmployee(req, res, next) {
         phone: updated.phone,
         email: updated.email,
         role: isLeadResult ? 'lead' : 'employee',
+        branch: updated.branch || cleanBranch,
         teamId: updated.teamId ? String(updated.teamId) : null,
         teamName: updated.teamName || null,
         leadId: updated.leadId ? String(updated.leadId) : null,
