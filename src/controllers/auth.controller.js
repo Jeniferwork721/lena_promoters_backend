@@ -77,20 +77,40 @@ async function generateNextStaffId() {
 async function loginWithPassword(req, res, next) {
   try {
     const { emailOrPhone, email, phone, phoneNumber, username, employeeId, password } = req.body;
-    const cleanInput = (emailOrPhone || email || phone || phoneNumber || username || employeeId || '').trim();
+    const cleanEmail = (email || (emailOrPhone && emailOrPhone.includes('@') ? emailOrPhone : '')).trim();
+    const cleanPhone = (phone || phoneNumber || (!emailOrPhone?.includes('@') ? emailOrPhone : '') || '').replace(/[^0-9+]/g, '');
+    const cleanInput = (cleanEmail || cleanPhone || username || employeeId || emailOrPhone || '').trim();
 
     if (!cleanInput || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide email/phone/employee ID and password.',
+        message: 'Please provide email, mobile number, and password.',
       });
     }
 
-    // Query staff user by email, phone, or employee ID
-    const [users] = await pool.query(
-      'SELECT * FROM staff_users WHERE (email = ? OR phone_number = ? OR employee_id = ?) AND is_active = 1 LIMIT 1',
-      [cleanInput, cleanInput, cleanInput]
-    );
+    // Query staff user by email and/or phone
+    let users = [];
+    if (cleanEmail && cleanPhone) {
+      const [both] = await pool.query(
+        'SELECT * FROM staff_users WHERE email = ? AND (phone_number = ? OR phone_number LIKE ?) AND is_active = 1 LIMIT 1',
+        [cleanEmail, cleanPhone, `%${cleanPhone.slice(-10)}`]
+      );
+      if (both.length > 0) {
+        users = both;
+      } else {
+        const [any] = await pool.query(
+          'SELECT * FROM staff_users WHERE (email = ? OR phone_number = ? OR phone_number LIKE ?) AND is_active = 1 LIMIT 1',
+          [cleanEmail, cleanPhone, `%${cleanPhone.slice(-10)}`]
+        );
+        users = any;
+      }
+    } else {
+      const [matched] = await pool.query(
+        'SELECT * FROM staff_users WHERE (email = ? OR phone_number = ? OR employee_id = ?) AND is_active = 1 LIMIT 1',
+        [cleanInput, cleanInput, cleanInput]
+      );
+      users = matched;
+    }
 
     if (users.length === 0) {
       return res.status(401).json({
