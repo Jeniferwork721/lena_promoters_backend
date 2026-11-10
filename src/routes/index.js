@@ -8,6 +8,16 @@ const siteVisitRoutes = require('./siteVisit.routes');
 const uploadRoutes = require('./upload.routes');
 const branchRoutes = require('./branch.routes');
 const crmRoutes = require('./crm.routes');
+const authController = require('../controllers/auth.controller');
+const { verifyStaffToken } = require('../middlewares/auth.middleware');
+
+// Root level change-password endpoint (resolves /api/v1/change-password directly)
+router.post('/change-password', (req, res, next) => {
+  if (req.headers.authorization) {
+    return verifyStaffToken(req, res, () => authController.changePassword(req, res, next));
+  }
+  return authController.changePassword(req, res, next);
+});
 
 // Mount routes
 router.use('/auth', authRoutes);

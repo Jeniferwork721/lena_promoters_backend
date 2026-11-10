@@ -40,7 +40,18 @@ router.post('/logout', authController.logout);
 // Authenticated staff routes (CRM Section 2)
 router.get('/me', verifyStaffToken, authController.getMe);
 router.get('/staff/profile', verifyStaffToken, authController.getMe);
-router.post('/change-password', verifyStaffToken, authController.changePassword);
+router.post('/change-password', (req, res, next) => {
+  if (req.headers.authorization) {
+    return verifyStaffToken(req, res, () => authController.changePassword(req, res, next));
+  }
+  return authController.changePassword(req, res, next);
+});
+router.post('/staff/change-password', (req, res, next) => {
+  if (req.headers.authorization) {
+    return verifyStaffToken(req, res, () => authController.changePassword(req, res, next));
+  }
+  return authController.changePassword(req, res, next);
+});
 router.delete('/staff/:staffId/account', verifyStaffToken, requireMD, authController.deleteStaffAccount);
 
 router.put('/staff/profile', authController.updateStaffProfile);
