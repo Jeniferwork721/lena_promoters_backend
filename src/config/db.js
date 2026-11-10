@@ -451,6 +451,71 @@ async function initializeDatabase() {
       console.log('🌱 Seeded active lucky draw scheme');
     }
 
+    // 9b. Lucky Draw Events / Seasons Table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`lucky_draw_events\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`event_code\` VARCHAR(50) NOT NULL UNIQUE,
+        \`event_title\` VARCHAR(150) NOT NULL,
+        \`start_date\` DATE NOT NULL,
+        \`end_date\` DATE NULL,
+        \`bumper_prize\` VARCHAR(255) NOT NULL DEFAULT '1,200 Sq.Ft DTCP Approved Villa Plot',
+        \`assured_gift\` VARCHAR(255) NOT NULL DEFAULT 'Guaranteed ₹500 Worth Gift Kit / Voucher',
+        \`entry_fee\` DECIMAL(10,2) NOT NULL DEFAULT 500.00,
+        \`status\` ENUM('ACTIVE', 'CONCLUDED', 'ARCHIVED') NOT NULL DEFAULT 'ACTIVE',
+        \`winner_coupon\` VARCHAR(50) NULL,
+        \`receipts_purged\` TINYINT(1) NOT NULL DEFAULT 0,
+        \`purged_at\` DATETIME NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // Ensure Season 1 exists if empty
+    try {
+      const [allEvents] = await connection.query('SELECT COUNT(*) as cnt FROM `lucky_draw_events`');
+      if (allEvents[0].cnt === 0) {
+        await connection.query(`
+          INSERT INTO \`lucky_draw_events\` (\`id\`, \`event_code\`, \`event_title\`, \`start_date\`, \`bumper_prize\`, \`status\`)
+          VALUES (1, 'SEASON-01', 'Mega Land Lucky Draw - Season 1', '2026-01-01', '1,200 Sq.Ft DTCP Approved Villa Plot', 'ACTIVE')
+          ON DUPLICATE KEY UPDATE \`status\` = 'ACTIVE';
+        `);
+        console.log('🎉 Seeded default Season 1 for Lucky Draw Events');
+      }
+    } catch (_) {}
+
+    // Ensure lucky_draw_coupons has event_id & rejection tracking columns
+    try {
+      const [colEv] = await connection.query("SHOW COLUMNS FROM `lucky_draw_coupons` LIKE 'event_id'");
+      if (colEv.length === 0) {
+        await connection.query("ALTER TABLE `lucky_draw_coupons` ADD COLUMN `event_id` INT NOT NULL DEFAULT 1 AFTER `id`");
+      }
+    } catch (_) {}
+    try {
+      const [colRej] = await connection.query("SHOW COLUMNS FROM `lucky_draw_coupons` LIKE 'rejection_reason'");
+      if (colRej.length === 0) {
+        await connection.query("ALTER TABLE `lucky_draw_coupons` ADD COLUMN `rejection_reason` VARCHAR(255) NULL AFTER `status`");
+      }
+    } catch (_) {}
+    try {
+      const [colStf] = await connection.query("SHOW COLUMNS FROM `lucky_draw_coupons` LIKE 'rejected_by_staff'");
+      if (colStf.length === 0) {
+        await connection.query("ALTER TABLE `lucky_draw_coupons` ADD COLUMN `rejected_by_staff` VARCHAR(150) NULL AFTER `rejection_reason`");
+      }
+    } catch (_) {}
+    try {
+      const [colAt] = await connection.query("SHOW COLUMNS FROM `lucky_draw_coupons` LIKE 'rejected_at'");
+      if (colAt.length === 0) {
+        await connection.query("ALTER TABLE `lucky_draw_coupons` ADD COLUMN `rejected_at` DATETIME NULL AFTER `rejected_by_staff`");
+      }
+    } catch (_) {}
+    try {
+      const [colWin] = await connection.query("SHOW COLUMNS FROM `lucky_draw_events` LIKE 'winner_coupon'");
+      if (colWin.length === 0) {
+        await connection.query("ALTER TABLE `lucky_draw_events` ADD COLUMN `winner_coupon` VARCHAR(50) NULL AFTER `status`");
+      }
+    } catch (_) {}
+
     // ==========================================================
     // CRM DATABASE MODULE INITIALIZATION
     // ==========================================================

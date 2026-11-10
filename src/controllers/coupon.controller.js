@@ -825,10 +825,70 @@ async function getCustomerCoupons(req, res, next) {
 }
 
 /**
+ * Helper: Ensures lucky_draw_events and all related tables/columns exist dynamically
+ */
+async function ensureLuckyDrawEventsTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lucky_draw_events (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        event_code VARCHAR(50) NOT NULL UNIQUE,
+        event_title VARCHAR(150) NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NULL,
+        bumper_prize VARCHAR(255) NOT NULL DEFAULT '1,200 Sq.Ft DTCP Approved Villa Plot',
+        assured_gift VARCHAR(255) NOT NULL DEFAULT 'Guaranteed ₹500 Worth Gift Kit / Voucher',
+        entry_fee DECIMAL(10,2) NOT NULL DEFAULT 500.00,
+        status ENUM('ACTIVE', 'CONCLUDED', 'ARCHIVED') NOT NULL DEFAULT 'ACTIVE',
+        winner_coupon VARCHAR(50) NULL,
+        receipts_purged TINYINT(1) NOT NULL DEFAULT 0,
+        purged_at DATETIME NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    const [allEvents] = await pool.query('SELECT COUNT(*) as cnt FROM lucky_draw_events');
+    if (allEvents[0].cnt === 0) {
+      await pool.query(`
+        INSERT INTO lucky_draw_events (id, event_code, event_title, start_date, bumper_prize, status)
+        VALUES (1, 'SEASON-01', 'Mega Land Lucky Draw - Season 1', '2026-01-01', '1,200 Sq.Ft DTCP Approved Villa Plot', 'ACTIVE')
+        ON DUPLICATE KEY UPDATE status = 'ACTIVE'
+      `);
+    }
+
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN winner_coupon VARCHAR(50) NULL AFTER status");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN receipts_purged TINYINT(1) NOT NULL DEFAULT 0");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN purged_at DATETIME NULL");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_coupons ADD COLUMN event_id INT NOT NULL DEFAULT 1 AFTER id");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_coupons ADD COLUMN rejection_reason VARCHAR(255) NULL AFTER status");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_coupons ADD COLUMN rejected_by_staff VARCHAR(150) NULL AFTER rejection_reason");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_coupons ADD COLUMN rejected_at DATETIME NULL AFTER rejected_by_staff");
+    } catch (_) {}
+  } catch (err) {
+    console.warn('⚠️ [ensureLuckyDrawEventsTable] DB init notice:', err.message);
+  }
+}
+
+/**
  * 9. Get Currently Active Lucky Draw Event / Season
  */
 async function getActiveEvent(req, res, next) {
   try {
+    await ensureLuckyDrawEventsTable();
     let event = null;
     try {
       const [rows] = await pool.query(
@@ -889,7 +949,7 @@ async function getActiveEvent(req, res, next) {
  */
 async function startNewEvent(req, res, next) {
   try {
-    const { eventTitle, bumperPrize, assuredGift, entryFee } = req.body;
+    const { eventTitle, bumperPrize, assuredGift, entryFee } = req.body || {};
     const staff = req.staff;
 
     const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'COUPON_HEAD', 'HEAD_MANAGER'];
@@ -901,22 +961,7 @@ async function startNewEvent(req, res, next) {
     }
 
     // Ensure lucky_draw_events table exists
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS lucky_draw_events (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        event_code VARCHAR(50) NOT NULL UNIQUE,
-        event_title VARCHAR(150) NOT NULL,
-        start_date DATE NOT NULL,
-        end_date DATE NULL,
-        bumper_prize VARCHAR(255) NOT NULL DEFAULT '1,200 Sq.Ft DTCP Approved Villa Plot',
-        assured_gift VARCHAR(255) NOT NULL DEFAULT 'Guaranteed ₹500 Worth Gift Kit / Voucher',
-        entry_fee DECIMAL(10,2) NOT NULL DEFAULT 500.00,
-        status ENUM('ACTIVE', 'CONCLUDED', 'ARCHIVED') NOT NULL DEFAULT 'ACTIVE',
-        receipts_purged TINYINT(1) NOT NULL DEFAULT 0,
-        purged_at DATETIME NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    `);
+    await ensureLuckyDrawEventsTable();
 
     // 1. Mark existing active events as CONCLUDED
     await pool.query(
@@ -968,7 +1013,7 @@ async function startNewEvent(req, res, next) {
 async function endEvent(req, res, next) {
   try {
     const { id } = req.params;
-    const { purgeReceipts, winnerCoupon } = req.body;
+    const { purgeReceipts, winnerCoupon } = req.body || {};
     const staff = req.staff;
 
     const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'COUPON_HEAD', 'HEAD_MANAGER'];
@@ -979,7 +1024,9 @@ async function endEvent(req, res, next) {
       });
     }
 
-    await pool.query(
+    await ensureLuckyDrawEventsTable();
+
+    const [updateRes] = await pool.query(
       `UPDATE lucky_draw_events 
        SET status = 'CONCLUDED', 
            end_date = CURDATE(), 
@@ -987,6 +1034,17 @@ async function endEvent(req, res, next) {
        WHERE id = ?`,
       [winnerCoupon || null, id]
     );
+
+    if (updateRes.affectedRows === 0) {
+      await pool.query(
+        `UPDATE lucky_draw_events 
+         SET status = 'CONCLUDED', 
+             end_date = CURDATE(), 
+             winner_coupon = ?
+         WHERE status = 'ACTIVE'`,
+        [winnerCoupon || null]
+      );
+    }
 
     let purgedCount = 0;
     if (purgeReceipts === true || purgeReceipts === 'true') {
@@ -1099,6 +1157,7 @@ async function purgeEventReceipts(req, res, next) {
  */
 async function listEvents(req, res, next) {
   try {
+    await ensureLuckyDrawEventsTable();
     let rows = [];
     try {
       const [dbRows] = await pool.query('SELECT * FROM lucky_draw_events ORDER BY id DESC');
@@ -1129,6 +1188,7 @@ async function listEvents(req, res, next) {
  */
 async function getCouponReports(req, res, next) {
   try {
+    await ensureLuckyDrawEventsTable();
     const { eventId } = req.query;
     let eventFilter = '';
     const params = [];
