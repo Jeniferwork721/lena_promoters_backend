@@ -50,8 +50,9 @@ router.post('/tasks', requireLeadOrMD, crmTask.createTask);
 router.patch('/tasks/:id/status', crmTask.updateTaskStatus);
 
 // ==========================================================
-// 7. WORK REPORTS (Section 7: #29 to #33 + Export)
+// 7. WORK REPORTS (Section 7: #29 to #33 + Export + By Contact Lookup)
 // ==========================================================
+router.get('/reports/by-contact', crmReport.getReportByContact);
 router.post('/reports', crmReport.createReport);
 router.get('/reports', crmReport.getReports);
 router.get('/reports/follow-ups', crmReport.getFollowUps);
@@ -72,6 +73,7 @@ router.get('/performance/teams', requireMD, crmDashboard.getTeamPerformance);
 // 9. REFERENCE DATA & CONFIG (Section 9: #39 to #40)
 // ==========================================================
 router.get('/config/options', crmConfig.getConfigOptions);
+router.get('/config/options/:list', crmConfig.getConfigOptionList);
 router.put('/config/options/:list', requireMD, crmConfig.updateConfigOptionList);
 
 // ==========================================================

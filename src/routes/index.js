@@ -8,6 +8,7 @@ const siteVisitRoutes = require('./siteVisit.routes');
 const uploadRoutes = require('./upload.routes');
 const branchRoutes = require('./branch.routes');
 const crmRoutes = require('./crm.routes');
+const layoutRoutes = require('./layout.routes');
 const authController = require('../controllers/auth.controller');
 const { verifyStaffToken } = require('../middlewares/auth.middleware');
 
@@ -22,6 +23,7 @@ router.post('/change-password', (req, res, next) => {
 // Mount routes
 router.use('/auth', authRoutes);
 router.use('/properties', propertyRoutes);
+router.use('/layouts', layoutRoutes);
 router.use('/coupons', couponRoutes);
 router.use('/site-visits', siteVisitRoutes);
 router.use('/uploads', uploadRoutes);

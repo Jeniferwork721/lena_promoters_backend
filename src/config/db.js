@@ -636,14 +636,103 @@ async function initializeDatabase() {
         \`next_action\` VARCHAR(100) NOT NULL,
         \`remarks\` TEXT NULL,
         \`calls\` INT NOT NULL DEFAULT 1,
+        \`discussed_layout\` TEXT NULL,
+        \`corner_plot\` VARCHAR(10) NULL,
+        \`not_interested_reason\` TEXT NULL,
+        \`client_location\` VARCHAR(255) NULL,
         \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX \`idx_rep_emp_date\` (\`employee_id\`, \`report_date\`),
         INDEX \`idx_rep_cust_lead\` (\`customer_lead_id\`),
         INDEX \`idx_rep_call_status\` (\`call_status\`),
+        INDEX \`idx_rep_contact\` (\`contact_phone\`),
         INDEX \`idx_rep_followup\` (\`follow_up_date\`, \`work_status\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    // Ensure new columns exist on work_reports if table was created previously
+    const reportExtraCols = [
+      { name: 'discussed_layout', type: 'TEXT NULL' },
+      { name: 'corner_plot', type: 'VARCHAR(10) NULL' },
+      { name: 'not_interested_reason', type: 'TEXT NULL' },
+      { name: 'client_location', type: 'VARCHAR(255) NULL' },
+    ];
+    for (const col of reportExtraCols) {
+      try {
+        const [exists] = await connection.query(`SHOW COLUMNS FROM \`work_reports\` LIKE '${col.name}'`);
+        if (exists.length === 0) {
+          await connection.query(`ALTER TABLE \`work_reports\` ADD COLUMN \`${col.name}\` ${col.type}`);
+        }
+      } catch (_) {}
+    }
+
+    // 14b. Layouts Table (Lena CRM Layout Details Management)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`layouts\` (
+        \`id\` VARCHAR(50) PRIMARY KEY,
+        \`name\` VARCHAR(150) NOT NULL UNIQUE,
+        \`location\` VARCHAR(255) NOT NULL,
+        \`price_per_cent\` DECIMAL(12,2) NOT NULL DEFAULT 0,
+        \`price_unit\` VARCHAR(20) NOT NULL DEFAULT 'cent',
+        \`offers\` JSON NULL,
+        \`property_type\` VARCHAR(100) NULL DEFAULT 'DTCP Plot',
+        \`plot_min\` DECIMAL(8,2) NULL,
+        \`plot_max\` DECIMAL(8,2) NULL,
+        \`budget_min\` DECIMAL(12,2) NULL,
+        \`budget_max\` DECIMAL(12,2) NULL,
+        \`total_plots\` INT NULL DEFAULT 0,
+        \`available_plots\` INT NULL DEFAULT 0,
+        \`corner_plots\` TINYINT(1) NOT NULL DEFAULT 0,
+        \`pdf_url\` TEXT NULL,
+        \`note\` TEXT NULL,
+        \`ongoing\` TINYINT(1) NOT NULL DEFAULT 1,
+        \`active\` TINYINT(1) NOT NULL DEFAULT 1,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_layout_name\` (\`name\`),
+        INDEX \`idx_layout_ongoing\` (\`ongoing\`, \`active\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // Seed Layouts from ongoing layout list if empty
+    try {
+      const [layoutCount] = await connection.query('SELECT COUNT(*) as count FROM `layouts`');
+      if (layoutCount[0].count === 0) {
+        const seedOffers = JSON.stringify(['Document Free', 'Bank Loan', 'Plot With Rent']);
+        const initialLayouts = [
+          { id: 'lay-01', name: 'Swathi Nagar', location: 'Aaravayal (near Amaravathipudur)', price: 400000, type: 'DTCP Plot', plotMin: 3.05, plotMax: 12.27, total: 24, avail: 6, corner: 0, note: 'DTCP approved. Gated villa community.', ongoing: 1 },
+          { id: 'lay-02', name: 'Vetri Nagar', location: 'Sulur (Karanampettai)', price: 600000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 8.0, total: 40, avail: 12, corner: 1, note: 'DTCP & RERA Approved residential layout.', ongoing: 1 },
+          { id: 'lay-03', name: "Lena's Annamalaiyar Nagar", location: 'Kanadukathan', price: 500000, type: 'DTCP Plot', plotMin: 2.5, plotMax: 10.0, total: 32, avail: 8, corner: 1, note: 'Prime residential plots on main road.', ongoing: 1 },
+          { id: 'lay-04', name: "Lena's Meenatchi Farm", location: 'Devakottai', price: 35000, type: 'Farm Land', plotMin: 10.0, plotMax: 100.0, total: 20, avail: 15, corner: 0, note: 'Sweet ground water with clear title deeds.', ongoing: 1 },
+          { id: 'lay-05', name: "Lena's Metro City", location: 'Kallal', price: 350000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 6.0, total: 50, avail: 18, corner: 1, note: 'Gated township layout with 40ft roads.', ongoing: 1 },
+          { id: 'lay-06', name: "Lena's MS Nagar", location: 'Kallal', price: 150000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 5.0, total: 30, avail: 9, corner: 0, note: 'Affordable residential investment plots.', ongoing: 1 },
+          { id: 'lay-07', name: "Lena's Roja Avenue", location: 'Vettaikaranpatti', price: 200000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 5.0, total: 28, avail: 7, corner: 0, note: 'Clear parent deeds with immediate registration.', ongoing: 1 },
+          { id: 'lay-08', name: "Lena's SA Nagar", location: 'Kundrakudi', price: 400000, type: 'DTCP Plot', plotMin: 3.0, plotMax: 8.0, total: 35, avail: 11, corner: 1, note: 'DTCP and RERA approved near temple road.', ongoing: 1 },
+          { id: 'lay-09', name: "Lena's Sona Nagar", location: 'Kallal', price: 150000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 5.0, total: 25, avail: 6, corner: 0, note: 'Rapidly developing residential corridor.', ongoing: 1 },
+          { id: 'lay-10', name: "Lena's Sri Sai Nagar", location: 'Aaravayal', price: 350000, type: 'DTCP Plot', plotMin: 2.5, plotMax: 7.0, total: 30, avail: 10, corner: 1, note: 'Residential plots with water and electricity.', ongoing: 1 },
+          { id: 'lay-11', name: "Lena's Singapore City", location: 'Thirukalapatti', price: 300000, type: 'DTCP Plot', plotMin: 3.0, plotMax: 10.0, total: 60, avail: 22, corner: 1, note: 'Grand entrance arch and park area.', ongoing: 1 },
+          { id: 'lay-12', name: "Lena's Arpudha Nagar", location: 'Kambanur', price: 200000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 5.0, total: 22, avail: 8, corner: 0, note: 'Investment layout near bus route.', ongoing: 1 },
+          { id: 'lay-13', name: "Lena's RVS Nagar", location: 'Nemam', price: 400000, type: 'DTCP Plot', plotMin: 3.0, plotMax: 7.0, total: 26, avail: 9, corner: 1, note: 'Premium layout with street lights and fencing.', ongoing: 1 },
+          { id: 'lay-14', name: "Lena's Velavan Nagar", location: 'Kariyapatti', price: 400000, type: 'DTCP Plot', plotMin: 1.0, plotMax: 1.0, total: 15, avail: 5, corner: 0, note: 'Priced per plot full value.', ongoing: 1 },
+        ];
+        for (const lay of initialLayouts) {
+          await connection.query(`
+            INSERT INTO \`layouts\` (
+              \`id\`, \`name\`, \`location\`, \`price_per_cent\`, \`price_unit\`, \`offers\`,
+              \`property_type\`, \`plot_min\`, \`plot_max\`, \`total_plots\`, \`available_plots\`,
+              \`corner_plots\`, \`note\`, \`ongoing\`, \`active\`
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ON DUPLICATE KEY UPDATE \`name\` = VALUES(\`name\`)
+          `, [
+            lay.id, lay.name, lay.location, lay.price, lay.name.includes('Velavan') ? 'plot' : 'cent',
+            seedOffers, lay.type, lay.plotMin, lay.plotMax, lay.total, lay.avail, lay.corner, lay.note, lay.ongoing
+          ]);
+        }
+        console.log('🏛️ Seeded official Lena Promoters Layouts to layouts table');
+      }
+    } catch (e) {
+      console.warn('Notice seeding layouts:', e.message);
+    }
 
     // 15. Config Options Table (Dropdown lists & reference data)
     await connection.query(`

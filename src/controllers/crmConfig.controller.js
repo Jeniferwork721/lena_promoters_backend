@@ -33,6 +33,36 @@ async function getConfigOptions(req, res, next) {
 }
 
 /**
+ * 39b. GET /config/options/:list (All authenticated staff)
+ * Returns values for one option list, e.g. GET /config/options/offers
+ */
+async function getConfigOptionList(req, res, next) {
+  try {
+    const listName = req.params.list;
+    const [rows] = await pool.query('SELECT list_values FROM config_options WHERE list_name = ? LIMIT 1', [listName]);
+
+    let values = DEFAULT_CRM_OPTIONS[listName] || [];
+    if (rows.length > 0) {
+      try {
+        const parsed = typeof rows[0].list_values === 'string' ? JSON.parse(rows[0].list_values) : rows[0].list_values;
+        if (Array.isArray(parsed)) values = parsed;
+      } catch (_) {}
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        list: listName,
+        values,
+      },
+      values,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * 40. PUT /config/options/:list (MD only)
  * Replace one option list.
  * Body: { values: ["...", "..."] }
@@ -120,6 +150,7 @@ async function resetEarlyTestData(req, res, next) {
 
 module.exports = {
   getConfigOptions,
+  getConfigOptionList,
   updateConfigOptionList,
   resetEarlyTestData,
 };

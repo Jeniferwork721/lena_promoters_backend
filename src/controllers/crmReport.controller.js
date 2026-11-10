@@ -1,11 +1,45 @@
 const { pool } = require('../config/db');
 
 /**
+ * Validate phone number: accepts 10-digit Indian numbers or foreign numbers with +<country code><number>
+ */
+function isValidPhoneNumber(phone) {
+  if (!phone) return false;
+  const clean = String(phone).trim();
+  const digitsOnly = clean.replace(/[^0-9]/g, '');
+  if (clean.startsWith('+')) {
+    return digitsOnly.length >= 7 && digitsOnly.length <= 15;
+  }
+  return digitsOnly.length === 10;
+}
+
+/**
+ * Helper: Ensures new work_reports columns exist dynamically
+ */
+async function ensureWorkReportsColumns() {
+  const extraCols = [
+    { name: 'discussed_layout', type: 'TEXT NULL' },
+    { name: 'corner_plot', type: 'VARCHAR(10) NULL' },
+    { name: 'not_interested_reason', type: 'TEXT NULL' },
+    { name: 'client_location', type: 'VARCHAR(255) NULL' },
+  ];
+  for (const col of extraCols) {
+    try {
+      const [exists] = await pool.query(`SHOW COLUMNS FROM work_reports LIKE '${col.name}'`);
+      if (exists.length === 0) {
+        await pool.query(`ALTER TABLE work_reports ADD COLUMN ${col.name} ${col.type}`);
+      }
+    } catch (_) {}
+  }
+}
+
+/**
  * 29. POST /reports (Lead, Employee)
  * Save one call entry with Section 7 conditional validations.
  */
 async function createReport(req, res, next) {
   try {
+    await ensureWorkReportsColumns();
     const employeeId = req.staff?.id;
     if (!employeeId) {
       return res.status(401).json({ success: false, message: 'Authentication required.' });
@@ -39,6 +73,11 @@ async function createReport(req, res, next) {
       requirement,
       nextAction,
       remarks,
+      // New separate fields
+      discussedLayout,
+      cornerPlot,
+      notInterestedReason,
+      clientLocation,
     } = req.body;
 
     // 1. Mandatory base fields check
@@ -53,20 +92,21 @@ async function createReport(req, res, next) {
     if (!workStatus || !workStatus.trim()) errors.workStatus = 'Work status is required';
     if (!nextAction || !nextAction.trim()) errors.nextAction = 'Next action is required';
 
-    // Phone format checks
-    const cleanContact = (contact || '').replace(/[^0-9]/g, '');
-    const cleanWhatsapp = (whatsapp || '').replace(/[^0-9]/g, '');
+    // Phone format checks: Indian 10 digits or foreign +<country code><number>
+    const cleanContact = (contact || '').trim();
+    const cleanWhatsapp = (whatsapp || '').trim();
 
-    if (cleanContact && !/^[6-9]\d{9}$/.test(cleanContact)) {
-      errors.contact = 'Contact phone must match 10 digits starting with 6 to 9';
+    if (cleanContact && !isValidPhoneNumber(cleanContact)) {
+      errors.contact = 'Contact phone must be a 10-digit number or +<country code><number>';
     }
-    if (cleanWhatsapp && !/^[6-9]\d{9}$/.test(cleanWhatsapp)) {
-      errors.whatsapp = 'WhatsApp phone must match 10 digits starting with 6 to 9';
+    if (cleanWhatsapp && !isValidPhoneNumber(cleanWhatsapp)) {
+      errors.whatsapp = 'WhatsApp phone must be a 10-digit number or +<country code><number>';
     }
 
     // 2. Conditional Validations based on callStatus
-    const isConnectedWilling = (callStatus || '').trim() === 'Connected - Willing';
-    const isCallBackRequested = (callStatus || '').trim() === 'Call Back Requested';
+    const statusTrim = (callStatus || '').trim();
+    const isConnectedWilling = statusTrim === 'Connected - Willing';
+    const isStageRequired = ['Connected - Willing', 'Follow Up Calls', 'WhatsApp Follow-up'].includes(statusTrim);
 
     if (isConnectedWilling) {
       if (!project || !project.trim()) errors.project = 'Project is required for Connected - Willing';
@@ -74,17 +114,16 @@ async function createReport(req, res, next) {
       if (!payment || !payment.trim()) errors.payment = 'Payment mode is required for Connected - Willing';
       if (!plot || !plot.trim()) errors.plot = 'Plot size is required for Connected - Willing';
       if (!budget || !budget.trim()) errors.budget = 'Budget is required for Connected - Willing';
-      if (!stage || !stage.trim()) errors.stage = 'Stage is required for Connected - Willing';
       if (!qualification || !qualification.trim()) errors.qualification = 'Qualification is required for Connected - Willing';
       if (!requirement || !requirement.trim()) errors.requirement = 'Requirement details are required for Connected - Willing';
-      if (!followUp) errors.followUp = 'Follow-up date is required for Connected - Willing';
     }
 
-    if (isCallBackRequested && !followUp) {
-      errors.followUp = 'Follow-up date is required for Call Back Requested';
+    // Stage is required when callStatus is Connected - Willing, Follow Up Calls, or WhatsApp Follow-up
+    if (isStageRequired && (!stage || !stage.trim())) {
+      errors.stage = `Stage is required when call status is '${statusTrim}'`;
     }
 
-    // FollowUp cannot be earlier than date
+    // FollowUp is optional and nullable for every call status. If provided, check date order.
     if (followUp && date && new Date(followUp) < new Date(date)) {
       errors.followUp = 'Follow-up date cannot be earlier than report date';
     }
@@ -97,17 +136,17 @@ async function createReport(req, res, next) {
       });
     }
 
-    // For any other status, property fields are ignored and saved empty
-    const finalProject = isConnectedWilling ? (project || '').trim() : '';
-    const finalOffer = isConnectedWilling ? (offer || '').trim() : '';
-    const finalPropertyType = isConnectedWilling ? (propertyType || '').trim() : '';
-    const finalPurpose = isConnectedWilling ? (purpose || '').trim() : '';
-    const finalPayment = isConnectedWilling ? (payment || '').trim() : '';
-    const finalPlot = isConnectedWilling ? (plot || '').trim() : '';
-    const finalBudget = isConnectedWilling ? (budget || '').trim() : '';
-    const finalStage = isConnectedWilling ? (stage || '').trim() : (stage || '').trim();
-    const finalQual = isConnectedWilling ? (qualification || '').trim() : (qualification || '').trim();
-    const finalReq = isConnectedWilling ? (requirement || '').trim() : (requirement || '').trim();
+    // Property fields for willing status, or preserve if provided
+    const finalProject = isConnectedWilling ? (project || '').trim() : (project || '').trim();
+    const finalOffer = isConnectedWilling ? (offer || '').trim() : (offer || '').trim();
+    const finalPropertyType = isConnectedWilling ? (propertyType || '').trim() : (propertyType || '').trim();
+    const finalPurpose = isConnectedWilling ? (purpose || '').trim() : (purpose || '').trim();
+    const finalPayment = isConnectedWilling ? (payment || '').trim() : (payment || '').trim();
+    const finalPlot = isConnectedWilling ? (plot || '').trim() : (plot || '').trim();
+    const finalBudget = isConnectedWilling ? (budget || '').trim() : (budget || '').trim();
+    const finalStage = stage ? stage.trim() : '';
+    const finalQual = qualification ? qualification.trim() : '';
+    const finalReq = requirement ? requirement.trim() : '';
 
     const [insertResult] = await pool.query(`
       INSERT INTO work_reports (
@@ -116,8 +155,9 @@ async function createReport(req, res, next) {
         call_time, call_duration, call_notes, project, offer,
         property_type, purpose, payment, plot, budget,
         stage, qualification, follow_up_date, site_visit, work_status,
-        requirement, next_action, remarks, calls
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        requirement, next_action, remarks, calls,
+        discussed_layout, corner_plot, not_interested_reason, client_location
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
     `, [
       employeeId,
       customerLeadId || null,
@@ -147,6 +187,10 @@ async function createReport(req, res, next) {
       finalReq,
       nextAction.trim(),
       remarks || null,
+      discussedLayout || null,
+      cornerPlot || null,
+      notInterestedReason || null,
+      clientLocation || null,
     ]);
 
     const reportId = insertResult.insertId;
@@ -164,8 +208,88 @@ async function createReport(req, res, next) {
         whatsapp: cleanWhatsapp,
         callStatus: callStatus.trim(),
         workStatus,
+        stage: finalStage,
         calls: 1,
+        discussedLayout: discussedLayout || null,
+        cornerPlot: cornerPlot || null,
+        notInterestedReason: notInterestedReason || null,
+        clientLocation: clientLocation || null,
       },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Lookup previous call history for a contact number across all employees
+ * GET /reports/by-contact?contact=<number> (or GET /reports?contact=<number>)
+ */
+async function getReportByContact(req, res, next) {
+  try {
+    await ensureWorkReportsColumns();
+    const contact = (req.query.contact || '').trim();
+    if (!contact) {
+      return res.status(200).json({ success: true, count: 0, last: null });
+    }
+
+    const cleanPhone = contact.replace(/[^0-9+]/g, '');
+    const digitsOnly = contact.replace(/[^0-9]/g, '');
+    const last10 = digitsOnly.length >= 10 ? digitsOnly.slice(-10) : digitsOnly;
+
+    // 1. Total earlier calls count across ALL employees
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) as total FROM work_reports 
+       WHERE contact_phone = ? 
+          OR contact_phone = ? 
+          OR contact_phone LIKE ?`,
+      [cleanPhone, digitsOnly, `%${last10}`]
+    );
+    const count = parseInt(countRows[0]?.total || 0, 10);
+
+    if (count === 0) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        last: null,
+      });
+    }
+
+    // 2. Fetch the most recent report with employee name
+    const [lastRows] = await pool.query(
+      `SELECT 
+         wr.id,
+         DATE_FORMAT(wr.report_date, '%Y-%m-%d') as date,
+         wr.call_time as callTime,
+         wr.call_status as callStatus,
+         wr.stage,
+         wr.next_action as nextAction,
+         wr.call_notes as callNotes,
+         s.full_name as employee
+       FROM work_reports wr
+       LEFT JOIN staff_users s ON s.id = wr.employee_id
+       WHERE wr.contact_phone = ? 
+          OR wr.contact_phone = ? 
+          OR wr.contact_phone LIKE ?
+       ORDER BY wr.report_date DESC, wr.id DESC
+       LIMIT 1`,
+      [cleanPhone, digitsOnly, `%${last10}`]
+    );
+
+    const last = lastRows[0] ? {
+      date: lastRows[0].date || null,
+      callTime: lastRows[0].callTime || null,
+      callStatus: lastRows[0].callStatus || null,
+      stage: lastRows[0].stage || null,
+      nextAction: lastRows[0].nextAction || null,
+      callNotes: lastRows[0].callNotes || null,
+      employee: lastRows[0].employee || 'Staff Member',
+    } : null;
+
+    return res.status(200).json({
+      success: true,
+      count,
+      last,
     });
   } catch (err) {
     next(err);
@@ -179,6 +303,11 @@ async function createReport(req, res, next) {
  */
 async function getReports(req, res, next) {
   try {
+    await ensureWorkReportsColumns();
+    // If contact query parameter is passed, redirect to contact lookup
+    if (req.query.contact && !req.query.page && !req.query.limit && !req.query.from && !req.query.to) {
+      return getReportByContact(req, res, next);
+    }
     const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
     const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
     const callerId = req.staff?.id;
@@ -327,6 +456,10 @@ async function getReports(req, res, next) {
         wr.next_action as nextAction,
         wr.remarks,
         wr.calls,
+        wr.discussed_layout as discussedLayout,
+        wr.corner_plot as cornerPlot,
+        wr.not_interested_reason as notInterestedReason,
+        wr.client_location as clientLocation,
         wr.created_at as createdAt
       FROM work_reports wr
       JOIN staff_users s ON wr.employee_id = s.id
@@ -369,6 +502,10 @@ async function getReports(req, res, next) {
       requirement: r.requirement || '',
       nextAction: r.nextAction,
       remarks: r.remarks || '',
+      discussedLayout: r.discussedLayout || null,
+      cornerPlot: r.cornerPlot || null,
+      notInterestedReason: r.notInterestedReason || null,
+      clientLocation: r.clientLocation || null,
       calls: r.calls,
       createdAt: r.createdAt,
     }));
@@ -690,6 +827,7 @@ async function exportReports(req, res, next) {
 module.exports = {
   createReport,
   getReports,
+  getReportByContact,
   getReportById,
   getFollowUps,
   getNextEntryNo,

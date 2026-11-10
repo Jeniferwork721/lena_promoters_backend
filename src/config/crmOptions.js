@@ -5,14 +5,15 @@
 const DEFAULT_CRM_OPTIONS = {
   callStatus: [
     'Connected - Willing',
+    'Follow Up Calls',
+    'WhatsApp Follow-up',
     'Connected - Not Willing',
+    'Call Back Requested',
     'Not Answering',
     'Busy',
     'Switched Off',
-    'Wrong Number',
-    'Call Back Requested',
-    'Follow Up Calls',
     'Out of Service',
+    'Wrong Number',
   ],
   callTypes: [
     'Incoming',
@@ -44,10 +45,12 @@ const DEFAULT_CRM_OPTIONS = {
   offers: [
     'Document Free',
     '50% Offer',
-    '10 Sq Ft',
-    '10 Gold & Silver Coin Free',
+    '10 Sq Ft 10 Gold & Silver Coin Free',
     'Bank Loan',
     'Plot With Rent',
+    'Buy 2 Get 1 Free',
+    '75% Offer',
+    '5,000 Scheme',
   ],
   purposes: [
     'Personal Use',
