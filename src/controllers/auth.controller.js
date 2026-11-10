@@ -72,42 +72,57 @@ async function generateNextStaffId() {
 }
 
 /**
- * 1. Staff Login using Password (Email, Phone, or Employee ID)
+ * 1. Staff Login using Password (Email + Mobile Number + Password)
  */
 async function loginWithPassword(req, res, next) {
   try {
     const { emailOrPhone, email, phone, phoneNumber, username, employeeId, password } = req.body;
-    const cleanEmail = (email || (emailOrPhone && emailOrPhone.includes('@') ? emailOrPhone : '')).trim();
-    const cleanPhone = (phone || phoneNumber || (!emailOrPhone?.includes('@') ? emailOrPhone : '') || '').replace(/[^0-9+]/g, '');
-    const cleanInput = (cleanEmail || cleanPhone || username || employeeId || emailOrPhone || '').trim();
+    const cleanEmail = (email || (emailOrPhone && emailOrPhone.includes('@') ? emailOrPhone : '')).trim().toLowerCase();
+    const cleanPhone = (phone || phoneNumber || (!emailOrPhone?.includes('@') ? emailOrPhone : '') || '').replace(/[^0-9]/g, '');
 
-    if (!cleanInput || !password) {
+    if (!password) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide email, mobile number, and password.',
+        message: 'Please enter your password.',
       });
     }
 
-    // Query staff user by email and/or phone
     let users = [];
+
+    // STRICT MATCH: If email and phone provided, BOTH must match the exact same staff record!
     if (cleanEmail && cleanPhone) {
-      const [both] = await pool.query(
-        'SELECT * FROM staff_users WHERE email = ? AND (phone_number = ? OR phone_number LIKE ?) AND is_active = 1 LIMIT 1',
-        [cleanEmail, cleanPhone, `%${cleanPhone.slice(-10)}`]
-      );
-      if (both.length > 0) {
-        users = both;
-      } else {
-        const [any] = await pool.query(
-          'SELECT * FROM staff_users WHERE (email = ? OR phone_number = ? OR phone_number LIKE ?) AND is_active = 1 LIMIT 1',
-          [cleanEmail, cleanPhone, `%${cleanPhone.slice(-10)}`]
-        );
-        users = any;
-      }
-    } else {
+      const phone10 = cleanPhone.slice(-10);
       const [matched] = await pool.query(
-        'SELECT * FROM staff_users WHERE (email = ? OR phone_number = ? OR employee_id = ?) AND is_active = 1 LIMIT 1',
-        [cleanInput, cleanInput, cleanInput]
+        `SELECT * FROM staff_users 
+         WHERE LOWER(email) = ? 
+           AND (
+             REPLACE(REPLACE(phone_number, '+91', ''), ' ', '') = ?
+             OR phone_number LIKE ?
+             OR phone_number = ?
+           )
+           AND is_active = 1 
+         LIMIT 1`,
+        [cleanEmail, phone10, `%${phone10}`, cleanPhone]
+      );
+
+      if (matched.length === 0) {
+        return res.status(401).json({
+          success: false,
+          message: 'The email address and mobile number do not match our staff records. Please check both details.',
+        });
+      }
+      users = matched;
+    } else {
+      const cleanInput = (cleanEmail || cleanPhone || username || employeeId || emailOrPhone || '').trim();
+      if (!cleanInput) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide both your official email and mobile number.',
+        });
+      }
+      const [matched] = await pool.query(
+        'SELECT * FROM staff_users WHERE (LOWER(email) = ? OR phone_number = ? OR employee_id = ?) AND is_active = 1 LIMIT 1',
+        [cleanInput.toLowerCase(), cleanInput, cleanInput]
       );
       users = matched;
     }

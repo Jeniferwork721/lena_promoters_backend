@@ -3,23 +3,50 @@ const { pool } = require('../config/db');
 const { sendStaffWelcomeEmail } = require('../services/email.service');
 
 /**
- * Helper to generate sequential Staff ID (e.g. LP-EMP-105)
+ * Helper to generate sequential, permanently unique Staff ID (e.g. LP-EMP-105)
+ * NEVER reuses IDs even if a previous employee was deleted by Admin.
  */
 async function generateNextStaffId() {
+  // 1. Scan current max employee_id in database
   const [rows] = await pool.query(
     "SELECT employee_id FROM staff_users WHERE employee_id LIKE 'LP-EMP-%'"
   );
-  const used = new Set(
-    rows
-      .map(r => parseInt(r.employee_id.replace(/^LP-EMP-/i, ''), 10))
-      .filter(n => !isNaN(n))
-  );
-
-  let candidate = 101;
-  while (used.has(candidate)) {
-    candidate++;
+  let highestAssigned = 100;
+  for (const r of rows) {
+    const num = parseInt(String(r.employee_id).replace(/^LP-EMP-/i, ''), 10);
+    if (!isNaN(num) && num > highestAssigned) {
+      highestAssigned = num;
+    }
   }
-  return `LP-EMP-${candidate}`;
+
+  // 2. Scan persistent sequence counter (ensures deleted staff IDs are NEVER recycled)
+  try {
+    const [cfg] = await pool.query(
+      "SELECT list_values FROM config_options WHERE list_name = 'highest_staff_id_seq' LIMIT 1"
+    );
+    if (cfg.length > 0 && cfg[0].list_values) {
+      const parsed = typeof cfg[0].list_values === 'number'
+        ? cfg[0].list_values
+        : parseInt(JSON.parse(cfg[0].list_values || '0'), 10);
+      if (!isNaN(parsed) && parsed > highestAssigned) {
+        highestAssigned = parsed;
+      }
+    }
+  } catch (_) {}
+
+  const nextStaffNumber = highestAssigned + 1;
+
+  // 3. Persist monotonic counter so this ID is permanently reserved
+  try {
+    await pool.query(
+      `INSERT INTO config_options (list_name, list_values) 
+       VALUES ('highest_staff_id_seq', ?) 
+       ON DUPLICATE KEY UPDATE list_values = VALUES(list_values)`,
+      [JSON.stringify(nextStaffNumber)]
+    );
+  } catch (_) {}
+
+  return `LP-EMP-${nextStaffNumber}`;
 }
 
 /**
