@@ -25,13 +25,83 @@ function resolvePropertyImages(plot) {
 }
 
 /**
+ * Helper to format a property / layout row
+ */
+function formatProperty(plot) {
+  const imagesList = resolvePropertyImages(plot);
+  const primaryImage = imagesList[0] || plot.image_path;
+
+  let amenitiesList = [];
+  if (plot.amenities) {
+    try {
+      amenitiesList = typeof plot.amenities === 'string' ? JSON.parse(plot.amenities) : plot.amenities;
+    } catch (_) {
+      amenitiesList = [];
+    }
+  }
+  if (!Array.isArray(amenitiesList) || amenitiesList.length === 0) {
+    amenitiesList = ['40ft Road', 'Sweet Water', 'Clear Parent Deeds'];
+  }
+
+  let offersList = [];
+  if (plot.offers) {
+    try {
+      offersList = typeof plot.offers === 'string' ? JSON.parse(plot.offers) : plot.offers;
+    } catch (_) {
+      offersList = [];
+    }
+  }
+
+  let pricePerCent = plot.price_per_cent != null ? parseFloat(plot.price_per_cent) : null;
+  if (pricePerCent == null && plot.price_starting) {
+    const num = parseFloat(String(plot.price_starting).replace(/[^\d.]/g, ''));
+    if (!isNaN(num)) pricePerCent = num;
+  }
+
+  return {
+    id: plot.id,
+    title: plot.title,
+    name: plot.title,
+    location: plot.location,
+    city: plot.city,
+    priceStarting: plot.price_starting,
+    pricePerCent: pricePerCent || 0,
+    priceUnit: plot.price_unit || 'cent',
+    pricePerSqFt: plot.price_per_sqft,
+    plotSizes: plot.plot_sizes,
+    approval: plot.approval,
+    reraNumber: plot.rera_number,
+    category: plot.category,
+    propertyType: plot.category,
+    imagePath: primaryImage,
+    images: imagesList,
+    amenities: amenitiesList,
+    offers: offersList,
+    plotMin: plot.plot_min != null ? parseFloat(plot.plot_min) : null,
+    plotMax: plot.plot_max != null ? parseFloat(plot.plot_max) : null,
+    budgetMin: plot.budget_min != null ? parseFloat(plot.budget_min) : null,
+    budgetMax: plot.budget_max != null ? parseFloat(plot.budget_max) : null,
+    totalPlots: plot.total_plots != null ? parseInt(plot.total_plots, 10) : 0,
+    availablePlots: plot.available_plots != null ? parseInt(plot.available_plots, 10) : 0,
+    cornerPlots: Boolean(plot.corner_plots),
+    pdfUrl: plot.pdf_url || null,
+    note: plot.note || '',
+    ongoing: plot.ongoing !== undefined ? Boolean(plot.ongoing) : true,
+    active: plot.active !== undefined ? Boolean(plot.active) : true,
+    isFeatured: Boolean(plot.is_featured),
+    createdAt: plot.created_at,
+    updatedAt: plot.updated_at,
+  };
+}
+
+/**
  * 1. Get All Properties (with filtering for search, city, and featured)
  */
 async function getAllProperties(req, res, next) {
   try {
-    const { city, search, isFeatured } = req.query;
+    const { city, search, isFeatured, ongoing } = req.query;
 
-    let query = 'SELECT * FROM properties WHERE 1=1';
+    let query = 'SELECT * FROM properties WHERE (active = 1 OR active IS NULL)';
     const params = [];
 
     if (city && city !== 'All Locations' && city !== 'All') {
@@ -44,6 +114,11 @@ async function getAllProperties(req, res, next) {
       params.push(isFeatured === 'true' || isFeatured === '1' ? 1 : 0);
     }
 
+    if (ongoing !== undefined) {
+      query += ' AND ongoing = ?';
+      params.push(ongoing === 'true' || ongoing === '1' ? 1 : 0);
+    }
+
     if (search && search.trim().length > 0) {
       query += ' AND (title LIKE ? OR location LIKE ? OR approval LIKE ? OR category LIKE ?)';
       const term = `%${search.trim()}%`;
@@ -53,41 +128,7 @@ async function getAllProperties(req, res, next) {
     query += ' ORDER BY is_featured DESC, created_at DESC';
 
     const [rows] = await pool.query(query, params);
-
-    // Map fields to match Flutter PlotModel with multi-image support
-    const properties = rows.map(plot => {
-      const imagesList = resolvePropertyImages(plot);
-      const primaryImage = imagesList[0] || plot.image_path;
-
-      let amenitiesList = [];
-      if (plot.amenities) {
-        try {
-          amenitiesList = typeof plot.amenities === 'string' ? JSON.parse(plot.amenities) : plot.amenities;
-        } catch (_) {
-          amenitiesList = [];
-        }
-      }
-      if (!Array.isArray(amenitiesList) || amenitiesList.length === 0) {
-        amenitiesList = ['40ft Road', 'Sweet Water', 'Clear Parent Deeds'];
-      }
-
-      return {
-        id: plot.id,
-        title: plot.title,
-        location: plot.location,
-        city: plot.city,
-        priceStarting: plot.price_starting,
-        pricePerSqFt: plot.price_per_sqft,
-        plotSizes: plot.plot_sizes,
-        approval: plot.approval,
-        reraNumber: plot.rera_number,
-        category: plot.category,
-        imagePath: primaryImage, // Primary portrait cover image
-        images: imagesList,      // Full list of portrait images (1, 2, 3+)
-        amenities: amenitiesList,
-        isFeatured: Boolean(plot.is_featured),
-      };
-    });
+    const properties = rows.map(formatProperty);
 
     return res.status(200).json({
       success: true,
@@ -105,7 +146,7 @@ async function getAllProperties(req, res, next) {
 async function getPropertyById(req, res, next) {
   try {
     const { id } = req.params;
-    const [rows] = await pool.query('SELECT * FROM properties WHERE id = ?', [id]);
+    const [rows] = await pool.query('SELECT * FROM properties WHERE id = ? OR title = ? LIMIT 1', [id, id]);
 
     if (rows.length === 0) {
       return res.status(404).json({
@@ -114,42 +155,9 @@ async function getPropertyById(req, res, next) {
       });
     }
 
-    const plot = rows[0];
-    const imagesList = resolvePropertyImages(plot);
-    const primaryImage = imagesList[0] || plot.image_path;
-
-    let amenitiesList = [];
-    if (plot.amenities) {
-      try {
-        amenitiesList = typeof plot.amenities === 'string' ? JSON.parse(plot.amenities) : plot.amenities;
-      } catch (_) {
-        amenitiesList = [];
-      }
-    }
-    if (!Array.isArray(amenitiesList) || amenitiesList.length === 0) {
-      amenitiesList = ['40ft Road', 'Sweet Water', 'Clear Parent Deeds'];
-    }
-
-    const property = {
-      id: plot.id,
-      title: plot.title,
-      location: plot.location,
-      city: plot.city,
-      priceStarting: plot.price_starting,
-      pricePerSqFt: plot.price_per_sqft,
-      plotSizes: plot.plot_sizes,
-      approval: plot.approval,
-      reraNumber: plot.rera_number,
-      category: plot.category,
-      imagePath: primaryImage,
-      images: imagesList,
-      amenities: amenitiesList,
-      isFeatured: Boolean(plot.is_featured),
-    };
-
     return res.status(200).json({
       success: true,
-      data: property,
+      data: formatProperty(rows[0]),
     });
   } catch (err) {
     next(err);
@@ -166,24 +174,49 @@ async function createProperty(req, res, next) {
     const {
       id,
       title,
+      name,
       location,
       city,
       priceStarting,
+      pricePerCent,
+      priceUnit = 'cent',
       pricePerSqFt,
       plotSizes,
+      plotMin,
+      plotMax,
+      budgetMin,
+      budgetMax,
+      totalPlots = 0,
+      availablePlots = 0,
+      cornerPlots = false,
+      offers,
+      pdfUrl,
+      note = '',
+      ongoing = true,
+      active = true,
       approval,
       reraNumber,
       category = 'Villa Plots',
+      propertyType,
       amenities,
       isFeatured = false,
     } = req.body;
 
-    if (!title || !location || !city || !priceStarting) {
+    const finalTitle = (title || name || '').trim();
+    if (!finalTitle || !location || !city) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide required property title, location, city, and priceStarting.',
+        message: 'Please provide required property title/name, location, and city.',
       });
     }
+
+    const numPrice = pricePerCent != null
+      ? parseFloat(pricePerCent)
+      : (priceStarting ? parseFloat(String(priceStarting).replace(/[^\d.]/g, '')) : 0);
+
+    const finalPriceStarting = priceStarting || (numPrice ? `₹${Number(numPrice).toLocaleString('en-IN')} / ${priceUnit}` : '₹0');
+    const finalPricePerSqFt = pricePerSqFt || (numPrice ? `₹${Math.round(numPrice / 435.6).toLocaleString('en-IN')} / sq.ft` : '');
+    const finalCategory = propertyType || category || 'Villa Plots';
 
     const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
     const uploadedImages = [];
@@ -246,47 +279,66 @@ async function createProperty(req, res, next) {
       parsedAmenities = ['40ft Road', 'Sweet Ground Water', 'Clear Parent Deeds'];
     }
 
+    // Parse offers safely
+    let parsedOffers = [];
+    if (offers) {
+      if (Array.isArray(offers)) {
+        parsedOffers = offers;
+      } else if (typeof offers === 'string') {
+        try {
+          parsedOffers = JSON.parse(offers);
+        } catch (_) {
+          parsedOffers = offers.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+    }
+
     const amenitiesJson = JSON.stringify(parsedAmenities);
     const imagesJson = JSON.stringify(finalImages);
+    const offersJson = JSON.stringify(parsedOffers);
     const featuredFlag = isFeatured === true || isFeatured === 'true' || isFeatured === '1' || isFeatured === 1 ? 1 : 0;
 
     await pool.query(
-      `INSERT INTO properties (id, title, location, city, price_starting, price_per_sqft, plot_sizes, approval, rera_number, category, image_path, images, amenities, is_featured)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO properties (
+        id, title, location, city, price_starting, price_per_cent, price_unit, price_per_sqft,
+        plot_sizes, approval, rera_number, category, image_path, images, amenities, offers,
+        plot_min, plot_max, budget_min, budget_max, total_plots, available_plots,
+        corner_plots, pdf_url, note, ongoing, active, is_featured
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         propertyId,
-        title,
-        location,
-        city,
-        priceStarting,
-        pricePerSqFt || priceStarting,
+        finalTitle,
+        location.trim(),
+        city.trim(),
+        finalPriceStarting,
+        numPrice,
+        priceUnit,
+        finalPricePerSqFt,
         plotSizes || 'Plots Available',
         approval || 'DTCP & RERA Approved',
         reraNumber || '',
-        category,
+        finalCategory,
         primaryImagePath,
         imagesJson,
         amenitiesJson,
+        offersJson,
+        plotMin != null ? parseFloat(plotMin) : null,
+        plotMax != null ? parseFloat(plotMax) : null,
+        budgetMin != null ? parseFloat(budgetMin) : null,
+        budgetMax != null ? parseFloat(budgetMax) : null,
+        parseInt(totalPlots, 10) || 0,
+        parseInt(availablePlots, 10) || 0,
+        cornerPlots ? 1 : 0,
+        pdfUrl || null,
+        note || '',
+        ongoing ? 1 : 0,
+        active ? 1 : 0,
         featuredFlag,
       ]
     );
 
-    const createdProperty = {
-      id: propertyId,
-      title,
-      location,
-      city,
-      priceStarting,
-      pricePerSqFt: pricePerSqFt || priceStarting,
-      plotSizes: plotSizes || 'Plots Available',
-      approval: approval || 'DTCP & RERA Approved',
-      reraNumber: reraNumber || '',
-      category,
-      imagePath: primaryImagePath,
-      images: finalImages,
-      amenities: parsedAmenities,
-      isFeatured: Boolean(featuredFlag),
-    };
+    const [createdRows] = await pool.query('SELECT * FROM properties WHERE id = ?', [propertyId]);
+    const createdProperty = formatProperty(createdRows[0]);
 
     return res.status(201).json({
       success: true,
@@ -309,20 +361,36 @@ async function updateProperty(req, res, next) {
     const { id } = req.params;
     const {
       title,
+      name,
       location,
       city,
       priceStarting,
+      pricePerCent,
+      priceUnit,
       pricePerSqFt,
       plotSizes,
+      plotMin,
+      plotMax,
+      budgetMin,
+      budgetMax,
+      totalPlots,
+      availablePlots,
+      cornerPlots,
+      offers,
+      pdfUrl,
+      note,
+      ongoing,
+      active,
       approval,
       reraNumber,
       category,
+      propertyType,
       amenities,
       isFeatured,
       keepExistingImages = true,
     } = req.body;
 
-    const [existing] = await pool.query('SELECT * FROM properties WHERE id = ?', [id]);
+    const [existing] = await pool.query('SELECT * FROM properties WHERE id = ? OR title = ?', [id, id]);
     if (existing.length === 0) {
       return res.status(404).json({ success: false, message: 'Property not found' });
     }
@@ -401,7 +469,7 @@ async function updateProperty(req, res, next) {
 
     const primaryImagePath = finalImages[0];
 
-    // Amenities: ALWAYS parse into JS array first, then JSON.stringify to prevent SQL array expansion syntax error
+    // Amenities: ALWAYS parse into JS array first, then JSON.stringify
     let finalAmenitiesArr = [];
     const sourceAmenities = amenities !== undefined ? amenities : current.amenities;
     if (Array.isArray(sourceAmenities)) {
@@ -423,12 +491,26 @@ async function updateProperty(req, res, next) {
       ? (isFeatured === true || isFeatured === 'true' || isFeatured === '1' || isFeatured === 1 ? 1 : 0)
       : (current.is_featured ? 1 : 0);
 
+    const finalTitle = title !== undefined ? title : (name !== undefined ? name : current.title);
+    const finalLocation = location !== undefined ? location : current.location;
+    const finalCity = city !== undefined ? city : current.city;
+    const finalPriceStarting = priceStarting !== undefined ? priceStarting : current.price_starting;
+    const finalPricePerCent = pricePerCent !== undefined ? parseFloat(pricePerCent) : current.price_per_cent;
+    const finalPriceUnit = priceUnit !== undefined ? priceUnit : current.price_unit;
+    const finalCategory = category !== undefined ? category : (propertyType !== undefined ? propertyType : current.category);
+
+    const offersJson = offers !== undefined
+      ? (Array.isArray(offers) ? JSON.stringify(offers) : JSON.stringify([offers]))
+      : current.offers;
+
     await pool.query(
       `UPDATE properties SET
         title = ?,
         location = ?,
         city = ?,
         price_starting = ?,
+        price_per_cent = ?,
+        price_unit = ?,
         price_per_sqft = ?,
         plot_sizes = ?,
         approval = ?,
@@ -437,42 +519,54 @@ async function updateProperty(req, res, next) {
         image_path = ?,
         images = ?,
         amenities = ?,
+        offers = ?,
+        plot_min = ?,
+        plot_max = ?,
+        budget_min = ?,
+        budget_max = ?,
+        total_plots = ?,
+        available_plots = ?,
+        corner_plots = ?,
+        pdf_url = ?,
+        note = ?,
+        ongoing = ?,
+        active = ?,
         is_featured = ?
        WHERE id = ?`,
       [
-        title ?? current.title,
-        location ?? current.location,
-        city ?? current.city,
-        priceStarting ?? current.price_starting,
+        finalTitle,
+        finalLocation,
+        finalCity,
+        finalPriceStarting,
+        finalPricePerCent,
+        finalPriceUnit,
         pricePerSqFt ?? current.price_per_sqft,
         plotSizes ?? current.plot_sizes,
         approval ?? current.approval,
         reraNumber ?? current.rera_number,
-        category ?? current.category,
+        finalCategory,
         primaryImagePath,
         JSON.stringify(finalImages),
         updatedAmenitiesJson,
+        offersJson,
+        plotMin !== undefined ? (plotMin != null ? parseFloat(plotMin) : null) : current.plot_min,
+        plotMax !== undefined ? (plotMax != null ? parseFloat(plotMax) : null) : current.plot_max,
+        budgetMin !== undefined ? (budgetMin != null ? parseFloat(budgetMin) : null) : current.budget_min,
+        budgetMax !== undefined ? (budgetMax != null ? parseFloat(budgetMax) : null) : current.budget_max,
+        totalPlots !== undefined ? parseInt(totalPlots, 10) : current.total_plots,
+        availablePlots !== undefined ? parseInt(availablePlots, 10) : current.available_plots,
+        cornerPlots !== undefined ? (cornerPlots ? 1 : 0) : current.corner_plots,
+        pdfUrl !== undefined ? pdfUrl : current.pdf_url,
+        note !== undefined ? note : current.note,
+        ongoing !== undefined ? (ongoing ? 1 : 0) : current.ongoing,
+        active !== undefined ? (active ? 1 : 0) : current.active,
         updatedFeatured,
-        id,
+        current.id,
       ]
     );
 
-    const updated = {
-      id,
-      title: title ?? current.title,
-      location: location ?? current.location,
-      city: city ?? current.city,
-      priceStarting: priceStarting ?? current.price_starting,
-      pricePerSqFt: pricePerSqFt ?? current.price_per_sqft,
-      plotSizes: plotSizes ?? current.plot_sizes,
-      approval: approval ?? current.approval,
-      reraNumber: reraNumber ?? current.rera_number,
-      category: category ?? current.category,
-      imagePath: primaryImagePath,
-      images: finalImages,
-      amenities: typeof updatedAmenitiesJson === 'string' ? JSON.parse(updatedAmenitiesJson || '[]') : updatedAmenitiesJson,
-      isFeatured: Boolean(updatedFeatured),
-    };
+    const [updatedRows] = await pool.query('SELECT * FROM properties WHERE id = ?', [current.id]);
+    const updated = formatProperty(updatedRows[0]);
 
     return res.status(200).json({
       success: true,
@@ -487,9 +581,6 @@ async function updateProperty(req, res, next) {
 
 /**
  * 5. Bulk Update Property Images
- * Supports updating multiple lands in one request:
- * Body: [{ id: "lp-01", images: ["url1", "url2"] }, ...]
- * Or: { "lp-01": ["url1", "url2"], "lp-02": [...] }
  */
 async function bulkUpdateImages(req, res, next) {
   try {
@@ -573,7 +664,7 @@ async function bulkUpdateImages(req, res, next) {
 async function deleteProperty(req, res, next) {
   try {
     const { id } = req.params;
-    const [result] = await pool.query('DELETE FROM properties WHERE id = ?', [id]);
+    const [result] = await pool.query('UPDATE properties SET active = 0 WHERE id = ?', [id]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: 'Property not found' });
@@ -581,7 +672,7 @@ async function deleteProperty(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      message: 'Property deleted successfully',
+      message: 'Property deactivated successfully',
     });
   } catch (err) {
     next(err);
@@ -593,8 +684,8 @@ async function deleteProperty(req, res, next) {
  */
 async function getCities(req, res, next) {
   try {
-    const [rows] = await pool.query('SELECT DISTINCT city FROM properties ORDER BY city ASC');
-    const cities = rows.map(r => r.city);
+    const [rows] = await pool.query('SELECT DISTINCT city FROM properties WHERE (active = 1 OR active IS NULL) ORDER BY city ASC');
+    const cities = rows.map(r => r.city).filter(Boolean);
     return res.status(200).json({
       success: true,
       cities: ['All Locations', ...cities],

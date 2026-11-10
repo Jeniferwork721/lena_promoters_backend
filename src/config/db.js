@@ -69,7 +69,7 @@ async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
-    // 3. Properties Table
+    // 3. Properties Table (Master Entity for Properties & Layouts)
     await connection.query(`
       CREATE TABLE IF NOT EXISTS \`properties\` (
         \`id\` VARCHAR(50) PRIMARY KEY,
@@ -77,6 +77,8 @@ async function initializeDatabase() {
         \`location\` VARCHAR(150) NOT NULL,
         \`city\` VARCHAR(100) NOT NULL,
         \`price_starting\` VARCHAR(50) NOT NULL,
+        \`price_per_cent\` DECIMAL(12,2) NULL,
+        \`price_unit\` VARCHAR(20) NOT NULL DEFAULT 'cent',
         \`price_per_sqft\` VARCHAR(50) NOT NULL,
         \`plot_sizes\` VARCHAR(100) NOT NULL,
         \`approval\` VARCHAR(150) NOT NULL,
@@ -85,16 +87,124 @@ async function initializeDatabase() {
         \`image_path\` TEXT NOT NULL,
         \`images\` JSON NULL,
         \`amenities\` JSON NULL,
+        \`offers\` JSON NULL,
+        \`plot_min\` DECIMAL(8,2) NULL,
+        \`plot_max\` DECIMAL(8,2) NULL,
+        \`budget_min\` DECIMAL(12,2) NULL,
+        \`budget_max\` DECIMAL(12,2) NULL,
+        \`total_plots\` INT NULL DEFAULT 0,
+        \`available_plots\` INT NULL DEFAULT 0,
+        \`corner_plots\` TINYINT(1) NOT NULL DEFAULT 0,
+        \`pdf_url\` TEXT NULL,
+        \`note\` TEXT NULL,
+        \`ongoing\` TINYINT(1) NOT NULL DEFAULT 1,
+        \`active\` TINYINT(1) NOT NULL DEFAULT 1,
         \`is_featured\` TINYINT(1) NOT NULL DEFAULT 0,
         \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_prop_title\` (\`title\`),
+        INDEX \`idx_prop_ongoing\` (\`ongoing\`, \`active\`),
+        INDEX \`idx_prop_city\` (\`city\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
-    // 3b. Ensure images column exists for multiple portrait photos
+    // 3b. Ensure all layout columns exist on properties table (safe dynamic migration)
+    const propertyMigrations = [
+      { name: 'images', type: 'JSON NULL AFTER \`image_path\`' },
+      { name: 'price_per_cent', type: 'DECIMAL(12,2) NULL' },
+      { name: 'price_unit', type: "VARCHAR(20) NOT NULL DEFAULT 'cent'" },
+      { name: 'offers', type: 'JSON NULL' },
+      { name: 'plot_min', type: 'DECIMAL(8,2) NULL' },
+      { name: 'plot_max', type: 'DECIMAL(8,2) NULL' },
+      { name: 'budget_min', type: 'DECIMAL(12,2) NULL' },
+      { name: 'budget_max', type: 'DECIMAL(12,2) NULL' },
+      { name: 'total_plots', type: 'INT NULL DEFAULT 0' },
+      { name: 'available_plots', type: 'INT NULL DEFAULT 0' },
+      { name: 'corner_plots', type: 'TINYINT(1) NOT NULL DEFAULT 0' },
+      { name: 'pdf_url', type: 'TEXT NULL' },
+      { name: 'note', type: 'TEXT NULL' },
+      { name: 'ongoing', type: 'TINYINT(1) NOT NULL DEFAULT 1' },
+      { name: 'active', type: 'TINYINT(1) NOT NULL DEFAULT 1' },
+    ];
+    for (const col of propertyMigrations) {
+      try {
+        await connection.query(`ALTER TABLE \`properties\` ADD COLUMN \`${col.name}\` ${col.type};`);
+      } catch (err) {
+        if (!err.message.includes('Duplicate column name')) {
+          console.warn(`[Properties Migration] Notice on ${col.name}:`, err.message);
+        }
+      }
+    }
+
+    // 3c. Unify layouts into properties: migrate existing layouts table if present, then maintain transparent view
     try {
-      await connection.query('ALTER TABLE \`properties\` ADD COLUMN \`images\` JSON NULL AFTER \`image_path\`;');
-    } catch (_) {}
+      const [tableCheck] = await connection.query("SHOW FULL TABLES LIKE 'layouts'");
+      if (tableCheck && tableCheck.length > 0 && Object.values(tableCheck[0])[1] === 'BASE TABLE') {
+        await connection.query(`
+          INSERT INTO \`properties\` (
+            \`id\`, \`title\`, \`location\`, \`city\`, \`price_starting\`, \`price_per_cent\`, \`price_unit\`,
+            \`offers\`, \`category\`, \`plot_sizes\`, \`plot_min\`, \`plot_max\`, \`budget_min\`, \`budget_max\`,
+            \`total_plots\`, \`available_plots\`, \`corner_plots\`, \`pdf_url\`, \`note\`, \`ongoing\`, \`active\`,
+            \`image_path\`, \`approval\`, \`price_per_sqft\`
+          )
+          SELECT
+            \`id\`, \`name\`, \`location\`, \`location\`,
+            CONCAT('₹', FORMAT(\`price_per_cent\`, 0), ' / ', \`price_unit\`),
+            \`price_per_cent\`, \`price_unit\`, \`offers\`, \`property_type\`, 'Residential Plots',
+            \`plot_min\`, \`plot_max\`, \`budget_min\`, \`budget_max\`,
+            \`total_plots\`, \`available_plots\`, \`corner_plots\`, \`pdf_url\`, \`note\`, \`ongoing\`, \`active\`,
+            'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80',
+            'DTCP Approved',
+            CONCAT('₹', ROUND(\`price_per_cent\` / 435.6), ' / sq.ft')
+          FROM \`layouts\`
+          ON DUPLICATE KEY UPDATE
+            \`price_per_cent\` = VALUES(\`price_per_cent\`),
+            \`offers\` = VALUES(\`offers\`),
+            \`total_plots\` = VALUES(\`total_plots\`),
+            \`available_plots\` = VALUES(\`available_plots\`),
+            \`corner_plots\` = VALUES(\`corner_plots\`),
+            \`pdf_url\` = VALUES(\`pdf_url\`),
+            \`note\` = VALUES(\`note\`),
+            \`ongoing\` = VALUES(\`ongoing\`),
+            \`active\` = VALUES(\`active\`);
+        `);
+        await connection.query("DROP TABLE IF EXISTS \`layouts\`");
+      }
+
+      await connection.query(`
+        CREATE OR REPLACE VIEW \`layouts\` AS
+        SELECT
+          \`id\`,
+          \`title\` AS \`name\`,
+          \`location\`,
+          \`city\`,
+          \`price_per_cent\`,
+          \`price_unit\`,
+          \`offers\`,
+          \`category\` AS \`property_type\`,
+          \`plot_min\`,
+          \`plot_max\`,
+          \`budget_min\`,
+          \`budget_max\`,
+          \`total_plots\`,
+          \`available_plots\`,
+          \`corner_plots\`,
+          \`pdf_url\`,
+          \`note\`,
+          \`ongoing\`,
+          \`active\`,
+          \`image_path\`,
+          \`images\`,
+          \`amenities\`,
+          \`is_featured\`,
+          \`created_at\`,
+          \`updated_at\`
+        FROM \`properties\`;
+      `);
+      console.log('🏛️ Unified properties and layouts master view verified');
+    } catch (e) {
+      console.warn('Notice on layouts view unification:', e.message);
+    }
 
     // 4. Lucky Draw Schemes Table
     await connection.query(`
@@ -402,25 +512,92 @@ async function initializeDatabase() {
           ? JSON.stringify(["Grand Entrance Arch", "24/7 Security", "Solar Street Lights", "Tar Road", "Children Play Area", "Immediate Registration"])
           : JSON.stringify(["40ft Tar Road", "Sweet Ground Water", "Clear Parent Deeds", "Electricity Facility", "Immediate Registration"]);
 
+      const numPrice = parseFloat(String(p.priceStarting).replace(/[^\d.]/g, '')) || 0;
+      const unit = String(p.priceStarting).includes('plot') ? 'plot' : 'cent';
+
+      let layoutOffers = ['Document Free', '50% Offer', 'Bank Loan', 'Plot With Rent'];
+      let note = '';
+      let pdfUrl = null;
+      let cornerPlot = 0;
+      let totalPlots = 30;
+      let availPlots = 10;
+      let pMin = 2.0;
+      let pMax = 6.0;
+
+      if (p.title.includes('Swathi Nagar')) {
+        layoutOffers = ['10 Sq Ft 10 Gold & Silver Coin Free', 'Document Free', 'Bank Loan', 'Plot With Rent', '75% Offer'];
+        note = 'DTCP approved. Gated villa community.';
+        pdfUrl = '/layouts/swathi-nagar.pdf';
+        totalPlots = 24;
+        availPlots = 6;
+        pMin = 3.05;
+        pMax = 12.27;
+      } else if (p.title.includes('Vetri Nagar')) {
+        layoutOffers = ['Document Free', '50% Offer', '5,000 Scheme', 'Plot With Rent'];
+        note = 'DTCP & RERA Approved residential layout.';
+        cornerPlot = 1;
+        totalPlots = 40;
+        availPlots = 12;
+      } else if (p.title.includes('Metro City')) {
+        layoutOffers = ['Document Free', '50% Offer', '10 Sq Ft 10 Gold & Silver Coin Free', 'Bank Loan', 'Plot With Rent'];
+        note = 'Gated township layout with 40ft roads.';
+        totalPlots = 50;
+        availPlots = 18;
+      } else if (p.title.includes('Ram Nagar')) {
+        layoutOffers = ['Buy 2 Get 1 Free', '50% Offer', 'Bank Loan', 'Plot With Rent'];
+      } else if (p.title.includes('Annamalaiyar')) {
+        layoutOffers = ['Bank Loan', 'Plot With Rent'];
+        totalPlots = 32;
+        availPlots = 8;
+      } else if (p.title.includes('Meenatchi Farm')) {
+        layoutOffers = ['Document Free'];
+        pMin = 10.0;
+        pMax = 100.0;
+        totalPlots = 20;
+        availPlots = 15;
+      } else if (p.title.includes('Singapore City')) {
+        layoutOffers = ['10 Sq Ft 10 Gold & Silver Coin Free', 'Document Free', 'Bank Loan', 'Plot With Rent', '75% Offer'];
+        totalPlots = 60;
+        availPlots = 22;
+      }
+
       await connection.query(`
-        INSERT INTO \`properties\` (\`id\`, \`title\`, \`location\`, \`city\`, \`price_starting\`, \`price_per_sqft\`, \`plot_sizes\`, \`approval\`, \`rera_number\`, \`category\`, \`image_path\`, \`amenities\`, \`is_featured\`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO \`properties\` (
+          \`id\`, \`title\`, \`location\`, \`city\`, \`price_starting\`, \`price_per_cent\`, \`price_unit\`,
+          \`price_per_sqft\`, \`plot_sizes\`, \`approval\`, \`rera_number\`, \`category\`, \`image_path\`,
+          \`amenities\`, \`offers\`, \`plot_min\`, \`plot_max\`, \`total_plots\`, \`available_plots\`,
+          \`corner_plots\`, \`pdf_url\`, \`note\`, \`ongoing\`, \`active\`, \`is_featured\`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
         ON DUPLICATE KEY UPDATE
           \`title\` = VALUES(\`title\`),
           \`location\` = VALUES(\`location\`),
           \`city\` = VALUES(\`city\`),
           \`price_starting\` = VALUES(\`price_starting\`),
+          \`price_per_cent\` = COALESCE(properties.price_per_cent, VALUES(\`price_per_cent\`)),
+          \`price_unit\` = COALESCE(properties.price_unit, VALUES(\`price_unit\`)),
           \`price_per_sqft\` = VALUES(\`price_per_sqft\`),
           \`plot_sizes\` = VALUES(\`plot_sizes\`),
           \`approval\` = VALUES(\`approval\`),
           \`category\` = VALUES(\`category\`),
-          \`is_featured\` = VALUES(\`is_featured\`)
+          \`is_featured\` = VALUES(\`is_featured\`),
+          \`offers\` = COALESCE(properties.offers, VALUES(\`offers\`)),
+          \`plot_min\` = COALESCE(properties.plot_min, VALUES(\`plot_min\`)),
+          \`plot_max\` = COALESCE(properties.plot_max, VALUES(\`plot_max\`)),
+          \`total_plots\` = COALESCE(properties.total_plots, VALUES(\`total_plots\`)),
+          \`available_plots\` = COALESCE(properties.available_plots, VALUES(\`available_plots\`)),
+          \`corner_plots\` = COALESCE(properties.corner_plots, VALUES(\`corner_plots\`)),
+          \`pdf_url\` = COALESCE(properties.pdf_url, VALUES(\`pdf_url\`)),
+          \`note\` = COALESCE(properties.note, VALUES(\`note\`)),
+          \`ongoing\` = COALESCE(properties.ongoing, VALUES(\`ongoing\`)),
+          \`active\` = COALESCE(properties.active, VALUES(\`active\`))
       `, [
         p.id,
         p.title,
         p.location,
         p.city,
         p.priceStarting,
+        numPrice,
+        unit,
         p.pricePerSqFt,
         p.plotSizes,
         p.approval,
@@ -428,6 +605,14 @@ async function initializeDatabase() {
         p.category,
         defaultLandImage,
         amenities,
+        JSON.stringify(layoutOffers),
+        pMin,
+        pMax,
+        totalPlots,
+        availPlots,
+        cornerPlot,
+        pdfUrl,
+        note,
         p.isFeatured
       ]);
     }
@@ -664,74 +849,6 @@ async function initializeDatabase() {
           await connection.query(`ALTER TABLE \`work_reports\` ADD COLUMN \`${col.name}\` ${col.type}`);
         }
       } catch (_) {}
-    }
-
-    // 14b. Layouts Table (Lena CRM Layout Details Management)
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS \`layouts\` (
-        \`id\` VARCHAR(50) PRIMARY KEY,
-        \`name\` VARCHAR(150) NOT NULL UNIQUE,
-        \`location\` VARCHAR(255) NOT NULL,
-        \`price_per_cent\` DECIMAL(12,2) NOT NULL DEFAULT 0,
-        \`price_unit\` VARCHAR(20) NOT NULL DEFAULT 'cent',
-        \`offers\` JSON NULL,
-        \`property_type\` VARCHAR(100) NULL DEFAULT 'DTCP Plot',
-        \`plot_min\` DECIMAL(8,2) NULL,
-        \`plot_max\` DECIMAL(8,2) NULL,
-        \`budget_min\` DECIMAL(12,2) NULL,
-        \`budget_max\` DECIMAL(12,2) NULL,
-        \`total_plots\` INT NULL DEFAULT 0,
-        \`available_plots\` INT NULL DEFAULT 0,
-        \`corner_plots\` TINYINT(1) NOT NULL DEFAULT 0,
-        \`pdf_url\` TEXT NULL,
-        \`note\` TEXT NULL,
-        \`ongoing\` TINYINT(1) NOT NULL DEFAULT 1,
-        \`active\` TINYINT(1) NOT NULL DEFAULT 1,
-        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX \`idx_layout_name\` (\`name\`),
-        INDEX \`idx_layout_ongoing\` (\`ongoing\`, \`active\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `);
-
-    // Seed Layouts from ongoing layout list if empty
-    try {
-      const [layoutCount] = await connection.query('SELECT COUNT(*) as count FROM `layouts`');
-      if (layoutCount[0].count === 0) {
-        const seedOffers = JSON.stringify(['Document Free', 'Bank Loan', 'Plot With Rent']);
-        const initialLayouts = [
-          { id: 'lay-01', name: 'Swathi Nagar', location: 'Aaravayal (near Amaravathipudur)', price: 400000, type: 'DTCP Plot', plotMin: 3.05, plotMax: 12.27, total: 24, avail: 6, corner: 0, note: 'DTCP approved. Gated villa community.', ongoing: 1 },
-          { id: 'lay-02', name: 'Vetri Nagar', location: 'Sulur (Karanampettai)', price: 600000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 8.0, total: 40, avail: 12, corner: 1, note: 'DTCP & RERA Approved residential layout.', ongoing: 1 },
-          { id: 'lay-03', name: "Lena's Annamalaiyar Nagar", location: 'Kanadukathan', price: 500000, type: 'DTCP Plot', plotMin: 2.5, plotMax: 10.0, total: 32, avail: 8, corner: 1, note: 'Prime residential plots on main road.', ongoing: 1 },
-          { id: 'lay-04', name: "Lena's Meenatchi Farm", location: 'Devakottai', price: 35000, type: 'Farm Land', plotMin: 10.0, plotMax: 100.0, total: 20, avail: 15, corner: 0, note: 'Sweet ground water with clear title deeds.', ongoing: 1 },
-          { id: 'lay-05', name: "Lena's Metro City", location: 'Kallal', price: 350000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 6.0, total: 50, avail: 18, corner: 1, note: 'Gated township layout with 40ft roads.', ongoing: 1 },
-          { id: 'lay-06', name: "Lena's MS Nagar", location: 'Kallal', price: 150000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 5.0, total: 30, avail: 9, corner: 0, note: 'Affordable residential investment plots.', ongoing: 1 },
-          { id: 'lay-07', name: "Lena's Roja Avenue", location: 'Vettaikaranpatti', price: 200000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 5.0, total: 28, avail: 7, corner: 0, note: 'Clear parent deeds with immediate registration.', ongoing: 1 },
-          { id: 'lay-08', name: "Lena's SA Nagar", location: 'Kundrakudi', price: 400000, type: 'DTCP Plot', plotMin: 3.0, plotMax: 8.0, total: 35, avail: 11, corner: 1, note: 'DTCP and RERA approved near temple road.', ongoing: 1 },
-          { id: 'lay-09', name: "Lena's Sona Nagar", location: 'Kallal', price: 150000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 5.0, total: 25, avail: 6, corner: 0, note: 'Rapidly developing residential corridor.', ongoing: 1 },
-          { id: 'lay-10', name: "Lena's Sri Sai Nagar", location: 'Aaravayal', price: 350000, type: 'DTCP Plot', plotMin: 2.5, plotMax: 7.0, total: 30, avail: 10, corner: 1, note: 'Residential plots with water and electricity.', ongoing: 1 },
-          { id: 'lay-11', name: "Lena's Singapore City", location: 'Thirukalapatti', price: 300000, type: 'DTCP Plot', plotMin: 3.0, plotMax: 10.0, total: 60, avail: 22, corner: 1, note: 'Grand entrance arch and park area.', ongoing: 1 },
-          { id: 'lay-12', name: "Lena's Arpudha Nagar", location: 'Kambanur', price: 200000, type: 'DTCP Plot', plotMin: 2.0, plotMax: 5.0, total: 22, avail: 8, corner: 0, note: 'Investment layout near bus route.', ongoing: 1 },
-          { id: 'lay-13', name: "Lena's RVS Nagar", location: 'Nemam', price: 400000, type: 'DTCP Plot', plotMin: 3.0, plotMax: 7.0, total: 26, avail: 9, corner: 1, note: 'Premium layout with street lights and fencing.', ongoing: 1 },
-          { id: 'lay-14', name: "Lena's Velavan Nagar", location: 'Kariyapatti', price: 400000, type: 'DTCP Plot', plotMin: 1.0, plotMax: 1.0, total: 15, avail: 5, corner: 0, note: 'Priced per plot full value.', ongoing: 1 },
-        ];
-        for (const lay of initialLayouts) {
-          await connection.query(`
-            INSERT INTO \`layouts\` (
-              \`id\`, \`name\`, \`location\`, \`price_per_cent\`, \`price_unit\`, \`offers\`,
-              \`property_type\`, \`plot_min\`, \`plot_max\`, \`total_plots\`, \`available_plots\`,
-              \`corner_plots\`, \`note\`, \`ongoing\`, \`active\`
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-            ON DUPLICATE KEY UPDATE \`name\` = VALUES(\`name\`)
-          `, [
-            lay.id, lay.name, lay.location, lay.price, lay.name.includes('Velavan') ? 'plot' : 'cent',
-            seedOffers, lay.type, lay.plotMin, lay.plotMax, lay.total, lay.avail, lay.corner, lay.note, lay.ongoing
-          ]);
-        }
-        console.log('🏛️ Seeded official Lena Promoters Layouts to layouts table');
-      }
-    } catch (e) {
-      console.warn('Notice seeding layouts:', e.message);
     }
 
     // 15. Config Options Table (Dropdown lists & reference data)
