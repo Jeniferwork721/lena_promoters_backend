@@ -29,7 +29,7 @@ const ALLOWED_MIMES = [
 // Configure disk storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    if (file.fieldname === 'receipt' || req.baseUrl.includes('upload')) {
+    if (file.fieldname === 'receipt' || req.path.includes('/receipt')) {
       cb(null, receiptDir);
     } else {
       cb(null, propertyDir);

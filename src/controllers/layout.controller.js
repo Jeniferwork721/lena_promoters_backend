@@ -296,11 +296,19 @@ async function updateLayout(req, res, next) {
       active,
       approval,
       reraNumber,
+      imagePath,
+      images,
     } = req.body;
 
     const offersJson = offers !== undefined
       ? (Array.isArray(offers) ? JSON.stringify(offers) : JSON.stringify([offers]))
       : current.offers;
+
+    let imagesJson = current.images;
+    if (images !== undefined) {
+      imagesJson = Array.isArray(images) ? JSON.stringify(images) : JSON.stringify([images]);
+    }
+    const finalImagePath = imagePath !== undefined ? imagePath : (images && images[0] ? images[0] : current.image_path);
 
     const finalTitle = name !== undefined ? name.trim() : (title !== undefined ? title.trim() : current.title);
     const finalLocation = location !== undefined ? location.trim() : current.location;
@@ -333,7 +341,9 @@ async function updateLayout(req, res, next) {
         ongoing = ?,
         active = ?,
         approval = ?,
-        rera_number = ?
+        rera_number = ?,
+        image_path = ?,
+        images = ?
        WHERE id = ?`,
       [
         finalTitle,
@@ -358,6 +368,8 @@ async function updateLayout(req, res, next) {
         active !== undefined ? (active ? 1 : 0) : current.active,
         approval !== undefined ? approval : current.approval,
         reraNumber !== undefined ? reraNumber : current.rera_number,
+        finalImagePath,
+        imagesJson,
         current.id,
       ]
     );
