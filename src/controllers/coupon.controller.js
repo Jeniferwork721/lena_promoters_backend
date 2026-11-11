@@ -140,8 +140,19 @@ async function customerApply(req, res, next) {
     const totalCount = quantity + freeCount;
     const totalAmount = quantity * 500;
 
-    // Determine current active season / event ID
-    const activeEventId = await getActiveEventId();
+    // Check if a season is currently ACTIVE
+    await ensureLuckyDrawEventsTable();
+    const [activeEventRows] = await pool.query(
+      "SELECT id, event_code, event_title FROM lucky_draw_events WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1"
+    );
+    if (!activeEventRows || activeEventRows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'The Lucky Draw coupon season has ended. Ticket bookings are paused until the next season starts.',
+      });
+    }
+
+    const activeEventId = activeEventRows[0].id;
 
     // Auto-generate next sequential coupon numbers with slot recycling & gap-filling
     const couponNumbers = await generateNextCouponNumbers(totalCount, activeEventId);
@@ -294,8 +305,12 @@ async function getStaffEntries(req, res, next) {
 
     if (eventId && eventId !== 'ALL') {
       try {
-        whereClause += ' AND event_id = ?';
-        params.push(parseInt(eventId, 10));
+        if (eventId === 'ACTIVE') {
+          whereClause += " AND event_id = (SELECT id FROM lucky_draw_events WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1)";
+        } else {
+          whereClause += ' AND event_id = ?';
+          params.push(parseInt(eventId, 10));
+        }
       } catch (_) {}
     }
 
@@ -365,6 +380,19 @@ async function getStaffEntries(req, res, next) {
       ORDER BY staff_name ASC
     `);
 
+    // 7. All Seasons / Events list for season filter dropdown & history
+    let events = [];
+    try {
+      const [eventRows] = await pool.query(`
+        SELECT id, event_code AS eventCode, event_title AS eventTitle, status, 
+               bumper_prize AS bumperPrize, winner_coupon AS winnerCoupon,
+               start_date AS startDate, end_date AS endDate
+        FROM lucky_draw_events 
+        ORDER BY id DESC
+      `);
+      events = eventRows;
+    } catch (_) {}
+
     const entries = rows.map(c => ({
       id: c.id,
       eventId: c.event_id || 1,
@@ -401,6 +429,7 @@ async function getStaffEntries(req, res, next) {
         hasPrevPage: page > 1,
       },
       staffList: staffListRows,
+      events,
       entries,
     });
   } catch (err) {
@@ -900,16 +929,30 @@ async function getActiveEvent(req, res, next) {
     } catch (_) {}
 
     if (!event) {
-      event = {
-        id: 1,
-        event_code: 'SEASON-01',
-        event_title: 'Mega Land Lucky Draw - Season 1',
-        start_date: new Date('2026-01-01'),
-        bumper_prize: '1,200 Sq.Ft DTCP Approved Villa Plot',
-        assured_gift: 'Guaranteed ₹500 Worth Gift Kit / Voucher',
-        entry_fee: '500.00',
-        status: 'ACTIVE',
-      };
+      let lastEvent = null;
+      try {
+        const [lastRows] = await pool.query(
+          "SELECT * FROM lucky_draw_events ORDER BY id DESC LIMIT 1"
+        );
+        if (lastRows && lastRows.length > 0) {
+          lastEvent = lastRows[0];
+        }
+      } catch (_) {}
+
+      return res.status(200).json({
+        success: true,
+        active: false,
+        event: null,
+        lastEvent: lastEvent ? {
+          id: lastEvent.id,
+          eventCode: lastEvent.event_code,
+          eventTitle: lastEvent.event_title,
+          status: lastEvent.status,
+          bumperPrize: lastEvent.bumper_prize,
+          winnerCoupon: lastEvent.winner_coupon,
+        } : null,
+        message: 'The Lucky Draw season has concluded. Next season will start soon!',
+      });
     }
 
     let totalEntries = 0;
