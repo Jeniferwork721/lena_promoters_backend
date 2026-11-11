@@ -700,6 +700,24 @@ async function initializeDatabase() {
         await connection.query("ALTER TABLE `lucky_draw_events` ADD COLUMN `winner_coupon` VARCHAR(50) NULL AFTER `status`");
       }
     } catch (_) {}
+    try {
+      const colsToAdd = [
+        { name: 'event_date_time', type: 'VARCHAR(100) NULL' },
+        { name: 'event_venue', type: 'VARCHAR(255) NULL' },
+        { name: 'winner_draw_time', type: 'VARCHAR(50) NULL' },
+        { name: 'winner_plot_details', type: 'VARCHAR(255) NULL' },
+        { name: 'winner_name', type: 'VARCHAR(150) NULL' },
+        { name: 'winner_phone', type: 'VARCHAR(50) NULL' },
+        { name: 'winner_address', type: 'TEXT NULL' },
+        { name: 'winner_aadhar_pan', type: 'VARCHAR(100) NULL' },
+      ];
+      for (const col of colsToAdd) {
+        const [cExists] = await connection.query(`SHOW COLUMNS FROM \`lucky_draw_events\` LIKE "${col.name}"`);
+        if (cExists.length === 0) {
+          await connection.query(`ALTER TABLE \`lucky_draw_events\` ADD COLUMN \`${col.name}\` ${col.type}`);
+        }
+      }
+    } catch (_) {}
 
     // ==========================================================
     // CRM DATABASE MODULE INITIALIZATION

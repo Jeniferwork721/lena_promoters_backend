@@ -469,6 +469,23 @@ async function getCouponById(req, res, next) {
     }
 
     const c = rows[0];
+
+    // Lookup customer profile for Aadhar and PAN KYC details if available
+    let aadharNumber = '';
+    let panNumber = '';
+    let customerCity = '';
+    try {
+      const [custRows] = await pool.query(
+        'SELECT aadhar_number, pan_number, city FROM customers WHERE phone = ? LIMIT 1',
+        [c.phone_number]
+      );
+      if (custRows && custRows.length > 0) {
+        aadharNumber = custRows[0].aadhar_number || '';
+        panNumber = custRows[0].pan_number || '';
+        customerCity = custRows[0].city || '';
+      }
+    } catch (_) {}
+
     return res.status(200).json({
       success: true,
       coupon: {
@@ -479,6 +496,9 @@ async function getCouponById(req, res, next) {
         dateOfBirth: c.date_of_birth,
         phoneNumber: c.phone_number,
         address: c.address,
+        aadharNumber,
+        panNumber,
+        city: customerCity,
         referredBy: c.referred_by || null,
         entryFee: parseFloat(c.entry_fee),
         status: c.status,
@@ -928,6 +948,30 @@ async function ensureLuckyDrawEventsTable() {
       await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN winner_coupon VARCHAR(50) NULL AFTER status");
     } catch (_) {}
     try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN event_date_time VARCHAR(100) NULL AFTER end_date");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN event_venue VARCHAR(255) NULL AFTER event_date_time");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN winner_draw_time VARCHAR(50) NULL AFTER event_venue");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN winner_plot_details VARCHAR(255) NULL AFTER winner_draw_time");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN winner_name VARCHAR(150) NULL AFTER winner_coupon");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN winner_phone VARCHAR(50) NULL AFTER winner_name");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN winner_address TEXT NULL AFTER winner_phone");
+    } catch (_) {}
+    try {
+      await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN winner_aadhar_pan VARCHAR(100) NULL AFTER winner_address");
+    } catch (_) {}
+    try {
       await pool.query("ALTER TABLE lucky_draw_events ADD COLUMN receipts_purged TINYINT(1) NOT NULL DEFAULT 0");
     } catch (_) {}
     try {
@@ -1096,7 +1140,18 @@ async function startNewEvent(req, res, next) {
 async function endEvent(req, res, next) {
   try {
     const { id } = req.params;
-    const { purgeReceipts, winnerCoupon } = req.body || {};
+    const {
+      purgeReceipts,
+      winnerCoupon,
+      eventDateTime,
+      eventVenue,
+      winnerDrawTime,
+      winnerPlotDetails,
+      winnerName,
+      winnerPhone,
+      winnerAddress,
+      winnerAadharPan,
+    } = req.body || {};
     const staff = req.staff;
 
     const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'COUPON_HEAD', 'HEAD_MANAGER'];
@@ -1113,9 +1168,28 @@ async function endEvent(req, res, next) {
       `UPDATE lucky_draw_events 
        SET status = 'CONCLUDED', 
            end_date = CURDATE(), 
-           winner_coupon = ?
+           event_date_time = ?,
+           event_venue = ?,
+           winner_draw_time = ?,
+           winner_plot_details = ?,
+           winner_coupon = ?,
+           winner_name = ?,
+           winner_phone = ?,
+           winner_address = ?,
+           winner_aadhar_pan = ?
        WHERE id = ?`,
-      [winnerCoupon || null, id]
+      [
+        eventDateTime || null,
+        eventVenue || null,
+        winnerDrawTime || null,
+        winnerPlotDetails || null,
+        winnerCoupon || null,
+        winnerName || null,
+        winnerPhone || null,
+        winnerAddress || null,
+        winnerAadharPan || null,
+        id,
+      ]
     );
 
     if (updateRes.affectedRows === 0) {
@@ -1123,10 +1197,38 @@ async function endEvent(req, res, next) {
         `UPDATE lucky_draw_events 
          SET status = 'CONCLUDED', 
              end_date = CURDATE(), 
-             winner_coupon = ?
+             event_date_time = ?,
+             event_venue = ?,
+             winner_draw_time = ?,
+             winner_plot_details = ?,
+             winner_coupon = ?,
+             winner_name = ?,
+             winner_phone = ?,
+             winner_address = ?,
+             winner_aadhar_pan = ?
          WHERE status = 'ACTIVE'`,
-        [winnerCoupon || null]
+        [
+          eventDateTime || null,
+          eventVenue || null,
+          winnerDrawTime || null,
+          winnerPlotDetails || null,
+          winnerCoupon || null,
+          winnerName || null,
+          winnerPhone || null,
+          winnerAddress || null,
+          winnerAadharPan || null,
+        ]
       );
+    }
+
+    // If winner coupon was provided, mark it as WINNER_ANNOUNCED
+    if (winnerCoupon) {
+      try {
+        await pool.query(
+          "UPDATE lucky_draw_coupons SET status = 'WINNER_ANNOUNCED' WHERE coupon_number = ?",
+          [winnerCoupon.trim()]
+        );
+      } catch (_) {}
     }
 
     let purgedCount = 0;
@@ -1257,6 +1359,15 @@ async function listEvents(req, res, next) {
         endDate: r.end_date,
         bumperPrize: r.bumper_prize,
         status: r.status,
+        winnerCoupon: r.winner_coupon,
+        winnerName: r.winner_name,
+        winnerPhone: r.winner_phone,
+        winnerAddress: r.winner_address,
+        winnerAadharPan: r.winner_aadhar_pan,
+        winnerPlotDetails: r.winner_plot_details,
+        eventDateTime: r.event_date_time,
+        eventVenue: r.event_venue,
+        winnerDrawTime: r.winner_draw_time,
         receiptsPurged: Boolean(r.receipts_purged),
       })),
     });
