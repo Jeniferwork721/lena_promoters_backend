@@ -8,6 +8,7 @@ router.get('/schemes', couponController.getActiveScheme);
 router.post('/customer-apply', couponController.customerApply);
 router.get('/customer/my-coupons', couponController.getCustomerCoupons);
 router.get('/details/:id', couponController.getCouponById);
+router.get('/staff-list', couponController.getCouponStaffList);
 
 // Staff coupon verification & rejection (with slot recycling)
 router.get('/staff/entries', verifyStaffToken, couponController.getStaffEntries);

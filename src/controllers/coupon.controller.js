@@ -375,13 +375,22 @@ async function getStaffEntries(req, res, next) {
       [...params, limit, offset]
     );
 
-    // 6. Distinct staff list for staff-based filter dropdown in frontend
-    const [staffListRows] = await pool.query(`
-      SELECT DISTINCT staff_name AS staffName, staff_id AS staffId
-      FROM lucky_draw_coupons
-      WHERE staff_name IS NOT NULL AND staff_name != ''
-      ORDER BY staff_name ASC
-    `);
+    // 6. Valid active employees from database for staff-based filter dropdown
+    let staffListRows = [];
+    try {
+      const [dbStaff] = await pool.query(`
+        SELECT 
+          id,
+          employee_id AS staffId,
+          full_name AS staffName,
+          branch_location AS branch,
+          role
+        FROM staff_users
+        WHERE is_active = 1
+        ORDER BY full_name ASC
+      `);
+      staffListRows = dbStaff;
+    } catch (_) {}
 
     // 7. All Seasons / Events list for season filter dropdown & history
     let events = [];
@@ -706,76 +715,102 @@ async function staffDirectEntry(req, res, next) {
     }
 
     const activeEventId = await getActiveEventId();
-    const couponNumber = await generateNextCouponNumber(customCouponNumber, activeEventId);
-    const id = `ld-${Date.now()}`;
+    const qty = Math.max(1, parseInt(req.body.quantity, 10) || 1);
+    const freeCount = Math.floor(qty / 10);
+    const totalCount = parseInt(req.body.totalTickets, 10) || (qty + freeCount);
+
+    const couponNumbers = totalCount > 1
+      ? await generateNextCouponNumbers(totalCount, activeEventId)
+      : [await generateNextCouponNumber(customCouponNumber, activeEventId)];
+
     const entryFee = 500.00;
     const status = markAsVerified ? 'VERIFIED_AND_PAID' : 'PENDING_STAFF_VERIFICATION';
     const verifiedAt = markAsVerified ? new Date() : null;
+    const cleanScreenshotName = (paymentScreenshotName || '').trim() || null;
+    const cleanScreenshotUrl = (paymentScreenshotUrl || '').trim() || null;
 
-    try {
-      await pool.query(
-        `INSERT INTO lucky_draw_coupons 
-          (id, event_id, coupon_number, customer_name, date_of_birth, phone_number, address, referred_by, entry_fee, status, staff_name, staff_id, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url, verified_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          activeEventId,
-          couponNumber,
-          customerName.trim(),
-          dateOfBirth || '1990-01-01',
-          phoneNumber.trim(),
-          address.trim(),
-          referredBy ? referredBy.trim() : null,
-          entryFee,
-          status,
-          staffName || 'Authorized Staff',
-          staffId || 'LP-EMP',
-          paymentTransId || 'DIRECT_CASH',
-          paymentMode || 'Direct Cash',
-          paymentScreenshotName || null,
-          paymentScreenshotUrl || null,
-          verifiedAt,
-        ]
-      );
-    } catch (_) {
-      // Fallback for legacy DB without event_id
-      await pool.query(
-        `INSERT INTO lucky_draw_coupons 
-          (id, coupon_number, customer_name, date_of_birth, phone_number, address, referred_by, entry_fee, status, staff_name, staff_id, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url, verified_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          couponNumber,
-          customerName.trim(),
-          dateOfBirth || '1990-01-01',
-          phoneNumber.trim(),
-          address.trim(),
-          referredBy ? referredBy.trim() : null,
-          entryFee,
-          status,
-          staffName || 'Authorized Staff',
-          staffId || 'LP-EMP',
-          paymentTransId || 'DIRECT_CASH',
-          paymentMode || 'Direct Cash',
-          paymentScreenshotName || null,
-          paymentScreenshotUrl || null,
-          verifiedAt,
-        ]
-      );
+    const createdCoupons = [];
+    const nowTs = Date.now();
+
+    for (let i = 0; i < couponNumbers.length; i++) {
+      const cNum = couponNumbers[i];
+      const couponId = `ld-${nowTs}-${i}-${Math.random().toString(36).substring(2, 6)}`;
+      const isBonus = i >= qty;
+
+      try {
+        await pool.query(
+          `INSERT INTO lucky_draw_coupons 
+            (id, event_id, coupon_number, customer_name, date_of_birth, phone_number, address, referred_by, entry_fee, status, staff_name, staff_id, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url, verified_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            couponId,
+            activeEventId,
+            cNum,
+            customerName.trim(),
+            dateOfBirth || '1990-01-01',
+            phoneNumber.trim(),
+            address.trim(),
+            referredBy ? referredBy.trim() : null,
+            isBonus ? 0.00 : entryFee,
+            status,
+            staffName || 'Authorized Staff',
+            staffId || 'LP-EMP',
+            paymentTransId || 'DIRECT_CASH',
+            paymentMode || 'Direct Cash',
+            cleanScreenshotName,
+            cleanScreenshotUrl,
+            verifiedAt,
+          ]
+        );
+      } catch (_) {
+        // Fallback for legacy DB without event_id
+        await pool.query(
+          `INSERT INTO lucky_draw_coupons 
+            (id, coupon_number, customer_name, date_of_birth, phone_number, address, referred_by, entry_fee, status, staff_name, staff_id, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url, verified_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            couponId,
+            cNum,
+            customerName.trim(),
+            dateOfBirth || '1990-01-01',
+            phoneNumber.trim(),
+            address.trim(),
+            referredBy ? referredBy.trim() : null,
+            isBonus ? 0.00 : entryFee,
+            status,
+            staffName || 'Authorized Staff',
+            staffId || 'LP-EMP',
+            paymentTransId || 'DIRECT_CASH',
+            paymentMode || 'Direct Cash',
+            cleanScreenshotName,
+            cleanScreenshotUrl,
+            verifiedAt,
+          ]
+        );
+      }
+
+      createdCoupons.push({
+        id: couponId,
+        eventId: activeEventId,
+        couponNumber: cNum,
+        customerName: customerName.trim(),
+        phoneNumber: phoneNumber.trim(),
+        address: address.trim(),
+        status,
+        entryFee: isBonus ? 0 : entryFee,
+        isBonus,
+        paymentScreenshotUrl: cleanScreenshotUrl,
+        paymentScreenshotName: cleanScreenshotName,
+        verifiedAt,
+      });
     }
 
     return res.status(201).json({
       success: true,
-      message: 'Walk-in customer entry created successfully.',
-      coupon: {
-        id,
-        eventId: activeEventId,
-        couponNumber,
-        customerName,
-        status,
-        entryFee,
-        verifiedAt,
-      },
+      message: `Walk-in customer entry created successfully (${couponNumbers.length} coupon${couponNumbers.length > 1 ? 's' : ''}).`,
+      coupon: createdCoupons[0],
+      coupons: createdCoupons,
+      totalTickets: createdCoupons.length,
     });
   } catch (err) {
     next(err);
@@ -1360,6 +1395,39 @@ async function getCouponReports(req, res, next) {
   }
 }
 
+/**
+ * 15. Get valid active staff from database for coupon referral and filters
+ */
+async function getCouponStaffList(req, res, next) {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        id,
+        employee_id AS staffId,
+        full_name AS staffName,
+        branch_location AS branch,
+        role
+      FROM staff_users
+      WHERE is_active = 1
+      ORDER BY full_name ASC
+    `);
+    return res.status(200).json({
+      success: true,
+      staff: rows.map(r => ({
+        id: r.id,
+        staffId: r.staffId,
+        staffName: r.staffName,
+        fullName: r.staffName,
+        name: r.staffName,
+        branch: r.branch,
+        role: r.role,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getActiveScheme,
   customerApply,
@@ -1375,4 +1443,5 @@ module.exports = {
   purgeEventReceipts,
   listEvents,
   getCouponReports,
+  getCouponStaffList,
 };
