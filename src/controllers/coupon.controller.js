@@ -306,10 +306,13 @@ async function getStaffEntries(req, res, next) {
     if (eventId && eventId !== 'ALL') {
       try {
         if (eventId === 'ACTIVE') {
-          whereClause += " AND event_id = (SELECT id FROM lucky_draw_events WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1)";
+          whereClause += " AND (event_id = (SELECT id FROM lucky_draw_events WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1) OR (event_id IS NULL AND (SELECT id FROM lucky_draw_events WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1) = 1))";
         } else {
-          whereClause += ' AND event_id = ?';
-          params.push(parseInt(eventId, 10));
+          const parsed = parseInt(eventId, 10);
+          if (!isNaN(parsed)) {
+            whereClause += parsed === 1 ? ' AND (event_id = ? OR event_id IS NULL)' : ' AND event_id = ?';
+            params.push(parsed);
+          }
         }
       } catch (_) {}
     }
@@ -958,8 +961,9 @@ async function getActiveEvent(req, res, next) {
     let totalEntries = 0;
     let verifiedEntries = 0;
     try {
+      const countFilter = Number(event.id) === 1 ? '(event_id = ? OR event_id IS NULL)' : 'event_id = ?';
       const [countRows] = await pool.query(
-        'SELECT COUNT(*) as total, SUM(CASE WHEN status = "VERIFIED_AND_PAID" THEN 1 ELSE 0 END) as verified FROM lucky_draw_coupons WHERE (event_id = ? OR event_id IS NULL)',
+        `SELECT COUNT(*) as total, SUM(CASE WHEN status = "VERIFIED_AND_PAID" THEN 1 ELSE 0 END) as verified FROM lucky_draw_coupons WHERE ${countFilter}`,
         [event.id]
       );
       totalEntries = countRows[0].total || 0;
@@ -1233,22 +1237,59 @@ async function getCouponReports(req, res, next) {
   try {
     await ensureLuckyDrawEventsTable();
     const { eventId } = req.query;
+
+    let targetEventId = null;
+    let filterApplied = false;
+
+    if (eventId && eventId !== 'ALL') {
+      filterApplied = true;
+      if (eventId === 'ACTIVE') {
+        try {
+          const [activeRows] = await pool.query(
+            "SELECT id FROM lucky_draw_events WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1"
+          );
+          if (activeRows && activeRows.length > 0) {
+            targetEventId = activeRows[0].id;
+          } else {
+            // Fallback: If no season is currently ACTIVE, resolve to the most recent season
+            const [lastRows] = await pool.query(
+              "SELECT id FROM lucky_draw_events ORDER BY id DESC LIMIT 1"
+            );
+            if (lastRows && lastRows.length > 0) {
+              targetEventId = lastRows[0].id;
+            }
+          }
+        } catch (_) {}
+      } else {
+        const parsed = parseInt(eventId, 10);
+        if (!isNaN(parsed)) {
+          targetEventId = parsed;
+        }
+      }
+    }
+
     let eventFilter = '';
     const params = [];
-    if (eventId && eventId !== 'ALL') {
-      eventFilter = ' WHERE event_id = ?';
-      params.push(parseInt(eventId, 10));
+    if (filterApplied && targetEventId !== null) {
+      if (Number(targetEventId) === 1) {
+        eventFilter = ' WHERE (c.event_id = ? OR c.event_id IS NULL)';
+      } else {
+        eventFilter = ' WHERE c.event_id = ?';
+      }
+      params.push(targetEventId);
+    } else if (filterApplied && targetEventId === null) {
+      eventFilter = ' WHERE 1 = 0';
     }
 
     // 1. Overall Totals
     const [summaryRows] = await pool.query(`
       SELECT 
         COUNT(*) as totalEntries,
-        SUM(CASE WHEN status = 'PENDING_STAFF_VERIFICATION' THEN 1 ELSE 0 END) as pendingCount,
-        SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN 1 ELSE 0 END) as verifiedCount,
-        SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejectedCount,
-        SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN entry_fee ELSE 0 END) as totalCollected
-      FROM lucky_draw_coupons
+        SUM(CASE WHEN c.status = 'PENDING_STAFF_VERIFICATION' THEN 1 ELSE 0 END) as pendingCount,
+        SUM(CASE WHEN c.status = 'VERIFIED_AND_PAID' THEN 1 ELSE 0 END) as verifiedCount,
+        SUM(CASE WHEN c.status = 'REJECTED' THEN 1 ELSE 0 END) as rejectedCount,
+        SUM(CASE WHEN c.status = 'VERIFIED_AND_PAID' THEN c.entry_fee ELSE 0 END) as totalCollected
+      FROM lucky_draw_coupons c
       ${eventFilter}
     `, params);
 
