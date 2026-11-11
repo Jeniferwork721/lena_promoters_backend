@@ -903,7 +903,7 @@ async function ensureLuckyDrawEventsTable() {
         event_title VARCHAR(150) NOT NULL,
         start_date DATE NOT NULL,
         end_date DATE NULL,
-        bumper_prize VARCHAR(255) NOT NULL DEFAULT '1,200 Sq.Ft DTCP Approved Villa Plot',
+        bumper_prize VARCHAR(255) NOT NULL DEFAULT 'If you win you get a land, otherwise ₹500 worth gift',
         assured_gift VARCHAR(255) NOT NULL DEFAULT 'Guaranteed ₹500 Worth Gift Kit / Voucher',
         entry_fee DECIMAL(10,2) NOT NULL DEFAULT 500.00,
         status ENUM('ACTIVE', 'CONCLUDED', 'ARCHIVED') NOT NULL DEFAULT 'ACTIVE',
@@ -919,7 +919,7 @@ async function ensureLuckyDrawEventsTable() {
     if (allEvents[0].cnt === 0) {
       await pool.query(`
         INSERT INTO lucky_draw_events (id, event_code, event_title, start_date, bumper_prize, status)
-        VALUES (1, 'SEASON-01', 'Mega Land Lucky Draw - Season 1', '2026-01-01', '1,200 Sq.Ft DTCP Approved Villa Plot', 'ACTIVE')
+        VALUES (1, 'SEASON-01', 'Mega Land Lucky Draw - Season 1', '2026-01-01', 'If you win you get a land, otherwise ₹500 worth gift', 'ACTIVE')
         ON DUPLICATE KEY UPDATE status = 'ACTIVE'
       `);
     }
@@ -1066,7 +1066,7 @@ async function startNewEvent(req, res, next) {
       [
         eventCode,
         title,
-        bumperPrize || '1,200 Sq.Ft DTCP Approved Villa Plot',
+        bumperPrize || 'If you win you get a land, otherwise ₹500 worth gift',
         assuredGift || 'Guaranteed ₹500 Worth Gift Kit / Voucher',
         entryFee ? parseFloat(entryFee) : 500.00,
       ]
