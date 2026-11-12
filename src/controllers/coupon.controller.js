@@ -156,15 +156,10 @@ async function customerApply(req, res, next) {
       }
     }
 
-    const quantity = Math.max(1, parseInt(req.body.quantity, 10) || 1);
-    const freeCount = Math.floor(quantity / 10);
-    const totalCount = quantity + freeCount;
-    const totalAmount = quantity * 500;
-
     // Check if a season is currently ACTIVE
     await ensureLuckyDrawEventsTable();
     const [activeEventRows] = await pool.query(
-      "SELECT id, event_code, event_title FROM lucky_draw_events WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1"
+      "SELECT id, event_code, event_title, entry_fee, bumper_prize FROM lucky_draw_events WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1"
     );
     if (!activeEventRows || activeEventRows.length === 0) {
       return res.status(400).json({
@@ -173,11 +168,17 @@ async function customerApply(req, res, next) {
       });
     }
 
-    const activeEventId = activeEventRows[0].id;
+    const activeEvent = activeEventRows[0];
+    const activeEventId = activeEvent.id;
+    const entryFee = parseFloat(activeEvent.entry_fee) || 500.00;
+
+    const quantity = Math.max(1, parseInt(req.body.quantity, 10) || 1);
+    const freeCount = Math.floor(quantity / 10);
+    const totalCount = quantity + freeCount;
+    const totalAmount = quantity * entryFee;
 
     // Auto-generate next sequential coupon numbers with slot recycling & gap-filling
     const couponNumbers = await generateNextCouponNumbers(totalCount, activeEventId);
-    const entryFee = 500.00;
     const status = 'PENDING_STAFF_VERIFICATION';
     const applicantPhone = (req.body.applicantPhone || '').trim() || null;
     const recipientEmail = (req.body.email || '').trim() || null;
@@ -207,7 +208,7 @@ async function customerApply(req, res, next) {
             address.trim(),
             finalReferredBy,
             applicantPhone,
-            entryFee,
+            isBonus ? 0.00 : entryFee,
             status,
             finalTransId,
             paymentMode || 'UPI QR',
@@ -231,7 +232,7 @@ async function customerApply(req, res, next) {
             address.trim(),
             finalReferredBy,
             applicantPhone,
-            entryFee,
+            isBonus ? 0.00 : entryFee,
             status,
             finalTransId,
             paymentMode || 'UPI QR',
@@ -819,6 +820,17 @@ async function staffDirectEntry(req, res, next) {
     }
 
     const activeEventId = await getActiveEventId();
+    let entryFee = 500.00;
+    try {
+      const [evRows] = await pool.query(
+        "SELECT entry_fee FROM lucky_draw_events WHERE id = ? LIMIT 1",
+        [activeEventId]
+      );
+      if (evRows && evRows.length > 0 && evRows[0].entry_fee) {
+        entryFee = parseFloat(evRows[0].entry_fee) || 500.00;
+      }
+    } catch (_) {}
+
     const qty = Math.max(1, parseInt(req.body.quantity, 10) || 1);
     const freeCount = Math.floor(qty / 10);
     const totalCount = parseInt(req.body.totalTickets, 10) || (qty + freeCount);
@@ -826,8 +838,6 @@ async function staffDirectEntry(req, res, next) {
     const couponNumbers = totalCount > 1
       ? await generateNextCouponNumbers(totalCount, activeEventId)
       : [await generateNextCouponNumber(customCouponNumber, activeEventId)];
-
-    const entryFee = 500.00;
     const status = markAsVerified ? 'VERIFIED_AND_PAID' : 'PENDING_STAFF_VERIFICATION';
     const verifiedAt = markAsVerified ? new Date() : null;
     const cleanScreenshotName = (paymentScreenshotName || '').trim() || null;
@@ -1385,7 +1395,106 @@ async function endEvent(req, res, next) {
 }
 
 /**
- * 12. Purge Receipts on Demand
+ * 12b. Update / Edit Lucky Draw Season Details (Admin/Manager/Coupon Head)
+ */
+async function updateEvent(req, res, next) {
+  try {
+    const { id } = req.params;
+    const {
+      eventTitle,
+      entryFee,
+      bumperPrize,
+      assuredGift,
+      startDate,
+      endDate,
+      eventDateTime,
+      eventVenue,
+      winnerPlotDetails,
+    } = req.body || {};
+
+    const staff = req.staff;
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'COUPON_HEAD', 'HEAD_MANAGER'];
+    if (staff && !allowedRoles.includes((staff.role || '').toUpperCase())) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only Admin or Coupon Head can edit season details.',
+      });
+    }
+
+    const [existing] = await pool.query('SELECT * FROM lucky_draw_events WHERE id = ? LIMIT 1', [id]);
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Season not found.',
+      });
+    }
+
+    const current = existing[0];
+    const newTitle = eventTitle && eventTitle.trim() ? eventTitle.trim() : current.event_title;
+    const newEntryFee = entryFee !== undefined && entryFee !== null && !isNaN(parseFloat(entryFee))
+      ? parseFloat(entryFee)
+      : (parseFloat(current.entry_fee) || 500.00);
+    const newBumperPrize = bumperPrize && bumperPrize.trim() ? bumperPrize.trim() : current.bumper_prize;
+    const newAssuredGift = assuredGift && assuredGift.trim() ? assuredGift.trim() : current.assured_gift;
+    const newStartDate = startDate || current.start_date;
+    const newEndDate = endDate !== undefined ? endDate : current.end_date;
+    const newVenue = eventVenue !== undefined ? eventVenue : current.event_venue;
+    const newDateTime = eventDateTime !== undefined ? eventDateTime : current.event_date_time;
+    const newPlotDetails = winnerPlotDetails !== undefined ? winnerPlotDetails : current.winner_plot_details;
+
+    await pool.query(
+      `UPDATE lucky_draw_events 
+       SET event_title = ?,
+           entry_fee = ?,
+           bumper_prize = ?,
+           assured_gift = ?,
+           start_date = ?,
+           end_date = ?,
+           event_venue = ?,
+           event_date_time = ?,
+           winner_plot_details = ?
+       WHERE id = ?`,
+      [
+        newTitle,
+        newEntryFee,
+        newBumperPrize,
+        newAssuredGift,
+        newStartDate,
+        newEndDate,
+        newVenue,
+        newDateTime,
+        newPlotDetails,
+        id,
+      ]
+    );
+
+    console.log(`✏️ [Season Updated] Season ${id} (${current.event_code}) updated. Title: "${newTitle}", Entry Fee: ₹${newEntryFee}`);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Season details updated successfully.',
+      event: {
+        id: current.id,
+        eventCode: current.event_code,
+        eventTitle: newTitle,
+        entryFee: parseFloat(newEntryFee),
+        bumperPrize: newBumperPrize,
+        assuredGift: newAssuredGift,
+        startDate: newStartDate,
+        endDate: newEndDate,
+        eventVenue: newVenue,
+        eventDateTime: newDateTime,
+        winnerPlotDetails: newPlotDetails,
+        status: current.status,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 13. Purge Receipts on Demand
  */
 async function purgeEventReceipts(req, res, next) {
   try {
@@ -1464,7 +1573,9 @@ async function listEvents(req, res, next) {
         eventTitle: r.event_title,
         startDate: r.start_date,
         endDate: r.end_date,
+        entryFee: parseFloat(r.entry_fee || 500.00),
         bumperPrize: r.bumper_prize,
+        assuredGift: r.assured_gift,
         status: r.status,
         winnerCoupon: r.winner_coupon,
         winnerName: r.winner_name,
@@ -1658,6 +1769,7 @@ module.exports = {
   getCustomerCoupons,
   getActiveEvent,
   startNewEvent,
+  updateEvent,
   endEvent,
   purgeEventReceipts,
   listEvents,

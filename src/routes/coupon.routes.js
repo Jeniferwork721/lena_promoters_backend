@@ -21,6 +21,7 @@ router.get('/reports/summary', verifyStaffToken, couponController.getCouponRepor
 router.get('/events/active', couponController.getActiveEvent);
 router.get('/events/list', verifyStaffToken, couponController.listEvents);
 router.post('/events/new', verifyStaffToken, couponController.startNewEvent);
+router.put('/events/:id', verifyStaffToken, couponController.updateEvent);
 router.post('/events/:id/end', verifyStaffToken, couponController.endEvent);
 router.delete('/events/:id/purge-receipts', verifyStaffToken, couponController.purgeEventReceipts);
 
