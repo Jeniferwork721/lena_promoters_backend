@@ -117,11 +117,21 @@ async function customerApply(req, res, next) {
         message: 'Payment screenshot receipt is mandatory. Please upload payment receipt screenshot.',
       });
     }
-    const cleanTransId = (paymentTransId || '').trim();
-    const finalTransId = cleanTransId || 'UPI_RECEIPT_ATTACHED';
 
-    // Verify Payment Transaction ID uniqueness across coupons
-    if (cleanTransId && cleanTransId !== 'UPI_RECEIPT_ATTACHED' && cleanTransId !== 'CASH_PAYMENT') {
+    const isCashPayment = (paymentMode || '').trim().toLowerCase().includes('cash');
+    const cleanTransId = (paymentTransId || '').trim();
+
+    if (!isCashPayment && !cleanTransId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment Transaction ID / UPI Reference is mandatory for online payments.',
+      });
+    }
+
+    const finalTransId = cleanTransId || (isCashPayment ? 'CASH_PAYMENT' : 'UPI_RECEIPT_ATTACHED');
+
+    // Verify Payment Transaction ID uniqueness across coupons (Transaction ID cannot repeat)
+    if (cleanTransId && cleanTransId !== 'UPI_RECEIPT_ATTACHED' && cleanTransId !== 'CASH_PAYMENT' && cleanTransId !== 'DIRECT_CASH') {
       const [existingTrans] = await pool.query(
         'SELECT coupon_number, customer_name FROM lucky_draw_coupons WHERE payment_trans_id = ? LIMIT 1',
         [cleanTransId]
@@ -130,7 +140,7 @@ async function customerApply(req, res, next) {
         return res.status(409).json({
           success: false,
           code: 'DUPLICATE_TRANSACTION_ID',
-          message: `Payment Transaction ID '${cleanTransId}' has already been registered for coupon ${existingTrans[0].coupon_number}. Please enter a valid, unique transaction ID.`,
+          message: `Payment Transaction ID '${cleanTransId}' has already been registered for coupon ${existingTrans[0].coupon_number}. Transaction ID cannot be repeated.`,
         });
       }
     }
@@ -551,6 +561,26 @@ async function staffEditAndVerify(req, res, next) {
     }
 
     const current = rows[0];
+
+    // Enforce unique Transaction ID if updated
+    if (paymentTransId) {
+      const cleanTransId = paymentTransId.trim();
+      const isCash = (paymentMode || current.payment_mode || '').trim().toLowerCase().includes('cash');
+      if (!isCash && cleanTransId && cleanTransId !== 'UPI_RECEIPT_ATTACHED' && cleanTransId !== 'CASH_PAYMENT' && cleanTransId !== 'DIRECT_CASH') {
+        const [existing] = await pool.query(
+          'SELECT coupon_number FROM lucky_draw_coupons WHERE payment_trans_id = ? AND id != ? LIMIT 1',
+          [cleanTransId, id]
+        );
+        if (existing.length > 0) {
+          return res.status(409).json({
+            success: false,
+            code: 'DUPLICATE_TRANSACTION_ID',
+            message: `Payment Transaction ID '${cleanTransId}' has already been registered for coupon ${existing[0].coupon_number}. Transaction ID cannot be repeated.`,
+          });
+        }
+      }
+    }
+
     const finalCouponNo = couponNumber ? couponNumber.trim().toUpperCase() : current.coupon_number;
     const newStatus = markAsVerified ? 'VERIFIED_AND_PAID' : current.status;
     const verifiedAt = markAsVerified ? new Date() : current.verified_at;
@@ -712,15 +742,33 @@ async function staffDirectEntry(req, res, next) {
       markAsVerified = true,
     } = req.body;
 
-    if (!customerName || !phoneNumber || !address) {
+    if (!customerName || !phoneNumber || !dateOfBirth || !address) {
       return res.status(400).json({
         success: false,
-        message: 'Customer name, phone number, and address are required.',
+        message: 'Customer name, date of birth, phone number, and address are all mandatory.',
       });
     }
 
+    const hasScreenshot = Boolean((paymentScreenshotName || '').trim() || (paymentScreenshotUrl || '').trim());
+    if (!hasScreenshot) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment receipt / transaction screenshot is mandatory. Please attach a screenshot.',
+      });
+    }
+
+    const isCashPayment = (paymentMode || '').trim().toLowerCase().includes('cash');
     const cleanTransId = (paymentTransId || '').trim();
-    if (cleanTransId && cleanTransId !== 'UPI_RECEIPT_ATTACHED' && cleanTransId !== 'CASH_PAYMENT') {
+
+    if (!isCashPayment && !cleanTransId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment Transaction ID / UPI Reference is mandatory for online payments.',
+      });
+    }
+
+    // Verify Payment Transaction ID uniqueness across coupons (Transaction ID cannot repeat)
+    if (cleanTransId && cleanTransId !== 'UPI_RECEIPT_ATTACHED' && cleanTransId !== 'CASH_PAYMENT' && cleanTransId !== 'DIRECT_CASH') {
       const [existingTrans] = await pool.query(
         'SELECT coupon_number, customer_name FROM lucky_draw_coupons WHERE payment_trans_id = ? LIMIT 1',
         [cleanTransId]
@@ -729,7 +777,7 @@ async function staffDirectEntry(req, res, next) {
         return res.status(409).json({
           success: false,
           code: 'DUPLICATE_TRANSACTION_ID',
-          message: `Payment Transaction ID '${cleanTransId}' has already been registered for coupon ${existingTrans[0].coupon_number}. Please enter a valid, unique transaction ID.`,
+          message: `Payment Transaction ID '${cleanTransId}' has already been registered for coupon ${existingTrans[0].coupon_number}. Transaction ID cannot be repeated.`,
         });
       }
     }
@@ -1163,6 +1211,28 @@ async function endEvent(req, res, next) {
     }
 
     await ensureLuckyDrawEventsTable();
+
+    // Verify winner coupon is valid and VERIFIED
+    if (winnerCoupon && winnerCoupon.trim()) {
+      const cleanWinnerCoupon = winnerCoupon.trim().toUpperCase();
+      const [cRows] = await pool.query(
+        'SELECT id, coupon_number, status, event_id FROM lucky_draw_coupons WHERE coupon_number = ? LIMIT 1',
+        [cleanWinnerCoupon]
+      );
+      if (cRows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Winning coupon '${cleanWinnerCoupon}' was not found. Please enter a valid coupon number.`,
+        });
+      }
+      const isVerified = (cRows[0].status === 'VERIFIED_AND_PAID' || cRows[0].status === 'VERIFIED');
+      if (!isVerified) {
+        return res.status(400).json({
+          success: false,
+          message: `Winning coupon '${cleanWinnerCoupon}' is currently '${cRows[0].status === 'PENDING_STAFF_VERIFICATION' ? 'UNDER VERIFICATION' : cRows[0].status}'. Only a VERIFIED coupon can be declared as the winner.`,
+        });
+      }
+    }
 
     const [updateRes] = await pool.query(
       `UPDATE lucky_draw_events 
