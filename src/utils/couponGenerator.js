@@ -19,74 +19,84 @@ async function getActiveEventId() {
 }
 
 /**
- * Generates an array of continuous sequential Lucky Draw coupon numbers for the active event.
- * Feature 1: Recycles rejected/freed slots (e.g. LENA-LD-0011) first before allocating higher numbers.
- * Feature 2: Resets from 0001 for every new event/season!
- * e.g. ['LENA-LD-0001', 'LENA-LD-0002', ...]
+ * Generates strictly monotonic sequential Lucky Draw coupon numbers for the active event/season.
+ * Rule 1: NEVER recycle or gap-fill numbers. Once a coupon number is assigned (pending, verified, or rejected),
+ *         it remains permanently bound to that entry and is never re-allocated.
+ * Rule 2: Numbers increment strictly past MAX(all issued numbers in this season).
+ * Rule 3: Resets from 0001 for every new season (e.g. ['LENA-LD-0001', 'LENA-LD-0002', ...]),
+ *         while preserving 8800+ range for legacy Season 1.
  */
 async function generateNextCouponNumbers(count = 1, explicitEventId = null) {
   const safeCount = Math.max(1, parseInt(count, 10) || 1);
   const eventId = explicitEventId || await getActiveEventId();
 
-  // 1. Fetch all assigned valid/active coupon numbers for this event
+  // 1. Fetch all coupon numbers ever issued for this event (regardless of status or prefix)
   let rows = [];
   try {
     const [dbRows] = await pool.query(
-      "SELECT coupon_number FROM lucky_draw_coupons WHERE (event_id = ? OR event_id IS NULL) AND coupon_number LIKE 'LENA-LD-%'",
+      "SELECT coupon_number FROM lucky_draw_coupons WHERE event_id = ? OR event_id IS NULL",
       [eventId]
     );
     rows = dbRows;
   } catch (err) {
-    // If event_id column does not exist yet in legacy DB, scan all
+    // Fallback if event_id column does not exist yet in legacy DB
     const [dbRows] = await pool.query(
-      "SELECT coupon_number FROM lucky_draw_coupons WHERE coupon_number LIKE 'LENA-LD-%'"
+      "SELECT coupon_number FROM lucky_draw_coupons"
     );
     rows = dbRows;
   }
 
-  // 2. Build set of taken numbers
-  const takenNumbers = new Set();
+  // 2. Scan highest assigned coupon number and check for legacy 8800 series
+  let maxNumber = 0;
+  let hasLegacy8800 = false;
+
   for (const r of rows) {
-    const digits = r.coupon_number.replace(/^LENA-LD-/i, '');
+    if (!r.coupon_number) continue;
+    let raw = String(r.coupon_number).trim();
+
+    // Strip REJ- and timestamp if it was a previously renamed token
+    if (raw.startsWith('REJ-')) {
+      raw = raw.replace(/^REJ-/, '').replace(/-[0-9]+$/, '');
+    }
+
+    // Extract numeric portion
+    const digits = raw.replace(/^LENA-LD-/i, '').replace(/[^0-9]/g, '');
     const num = parseInt(digits, 10);
     if (!isNaN(num)) {
-      takenNumbers.add(num);
+      if (num > maxNumber) {
+        maxNumber = num;
+      }
+      if (num >= 8000) {
+        hasLegacy8800 = true;
+      }
     }
   }
 
-  // 3. Determine starting base candidate:
-  // For new events, starts cleanly at 1 (0001).
-  // If this is legacy Season 1 where all existing numbers are >= 8000 (e.g. 8801..8830),
-  // continue sequentially from 8800+ so legacy season is not disrupted.
-  let candidate = 1;
-  const isLegacy8800Event = takenNumbers.size > 0 && Array.from(takenNumbers).every(n => n >= 8000);
-  if (isLegacy8800Event) {
-    candidate = 8801;
-  }
+  // 3. Determine starting candidate:
+  // For legacy Season 1 (where coupons were 8801+), ensure next starts after max(8800, maxNumber)
+  // For Season 2+ or new events, starts strictly at max(0, maxNumber) + 1 (e.g. 1 -> 0001)
+  const isLegacy8800Event = hasLegacy8800 && (eventId === 1 || eventId === null);
+  const baseCandidate = isLegacy8800Event
+    ? Math.max(8800, maxNumber) + 1
+    : Math.max(0, maxNumber) + 1;
 
-  // 4. Gap-filling slot allocation:
-  // Fills any recycled/freed numbers first (e.g. if 0011 was rejected, 11 is not in takenNumbers,
-  // so applicant gets LENA-LD-0011 immediately).
   const generated = [];
-  while (generated.length < safeCount) {
-    if (!takenNumbers.has(candidate)) {
-      const candidateStr = isLegacy8800Event
-          ? `LENA-LD-${candidate}`
-          : `LENA-LD-${String(candidate).padStart(4, '0')}`;
-      generated.push(candidateStr);
-      takenNumbers.add(candidate);
-    }
-    candidate++;
+  for (let i = 0; i < safeCount; i++) {
+    const currentNum = baseCandidate + i;
+    const candidateStr = isLegacy8800Event
+      ? `LENA-LD-${currentNum}`
+      : `LENA-LD-${String(currentNum).padStart(4, '0')}`;
+    generated.push(candidateStr);
   }
 
   return generated;
 }
 
 /**
- * Generates single next sequential Lucky Draw coupon number with slot recycling.
+ * Generates single next sequential Lucky Draw coupon number without slot recycling.
  */
 async function generateNextCouponNumber(customNumber = null, explicitEventId = null) {
-  // If customNumber is explicitly provided and is free in the active event, use it
+  // If customNumber is explicitly provided and is completely free across all records, use it
   if (customNumber && typeof customNumber === 'string' && customNumber.trim().length > 0) {
     const formatted = customNumber.trim().toUpperCase();
     const [existing] = await pool.query(
@@ -96,7 +106,7 @@ async function generateNextCouponNumber(customNumber = null, explicitEventId = n
     if (existing.length === 0) {
       return formatted;
     }
-    console.log(`ℹ️ [Coupon Generator] Requested number ${formatted} is already assigned. Finding next free/recycled slot.`);
+    console.log(`ℹ️ [Coupon Generator] Requested number ${formatted} is already assigned. Finding next strictly sequential slot.`);
   }
 
   const [single] = await generateNextCouponNumbers(1, explicitEventId);

@@ -719,6 +719,29 @@ async function initializeDatabase() {
       }
     } catch (_) {}
 
+    // Auto-repair any legacy coupons where coupon_number was mangled with REJ-
+    try {
+      const [rejRows] = await connection.query(
+        "SELECT id, coupon_number FROM `lucky_draw_coupons` WHERE coupon_number LIKE 'REJ-%'"
+      );
+      for (const r of rejRows) {
+        const originalNum = r.coupon_number.replace(/^REJ-/, '').replace(/-[0-9]+$/, '');
+        const [conflict] = await connection.query(
+          "SELECT id FROM `lucky_draw_coupons` WHERE coupon_number = ? AND id != ?",
+          [originalNum, r.id]
+        );
+        if (conflict.length === 0) {
+          await connection.query(
+            "UPDATE `lucky_draw_coupons` SET coupon_number = ?, status = 'REJECTED' WHERE id = ?",
+            [originalNum, r.id]
+          );
+          console.log(`🔧 [Auto-Repair] Restored coupon_number from ${r.coupon_number} to ${originalNum}`);
+        } else {
+          console.log(`ℹ️ [Auto-Repair] Cannot restore ${r.coupon_number} to ${originalNum} as slot is taken by id ${conflict[0].id}`);
+        }
+      }
+    } catch (_) {}
+
     // ==========================================================
     // CRM DATABASE MODULE INITIALIZATION
     // ==========================================================

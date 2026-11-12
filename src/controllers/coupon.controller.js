@@ -8,6 +8,18 @@ const {
 } = require('../utils/couponGenerator');
 
 /**
+ * Helper: Sanitizes any coupon number so it is never displayed with 'REJ-' prefix or timestamp.
+ */
+function sanitizeCouponNumber(couponNumber) {
+  if (!couponNumber) return '';
+  const s = String(couponNumber).trim();
+  if (s.startsWith('REJ-')) {
+    return s.replace(/^REJ-/, '').replace(/-[0-9]+$/, '');
+  }
+  return s;
+}
+
+/**
  * Helper: Automatically captures customer profile into the `customers` table
  * when any coupon is entered (by customer or staff).
  * `phone_number` is strictly unique. If the customer already exists, updates details;
@@ -418,7 +430,7 @@ async function getStaffEntries(req, res, next) {
     const entries = rows.map(c => ({
       id: c.id,
       eventId: c.event_id || 1,
-      couponNumber: c.coupon_number,
+      couponNumber: sanitizeCouponNumber(c.coupon_number),
       customerName: c.customer_name,
       dateOfBirth: c.date_of_birth,
       phoneNumber: c.phone_number,
@@ -501,7 +513,7 @@ async function getCouponById(req, res, next) {
       coupon: {
         id: c.id,
         eventId: c.event_id || 1,
-        couponNumber: c.coupon_number,
+        couponNumber: sanitizeCouponNumber(c.coupon_number),
         customerName: c.customer_name,
         dateOfBirth: c.date_of_birth,
         phoneNumber: c.phone_number,
@@ -672,10 +684,7 @@ async function staffRejectCoupon(req, res, next) {
       });
     }
 
-    const originalCouponNumber = current.coupon_number;
-    // Renaming the token releases the slot (e.g. LENA-LD-0011) back to the generator pool
-    // while keeping customer/scam details for audit purposes
-    const releasedTokenName = `REJ-${originalCouponNumber}-${Date.now()}`;
+    const couponNumber = sanitizeCouponNumber(current.coupon_number);
     const now = new Date();
 
     try {
@@ -688,7 +697,7 @@ async function staffRejectCoupon(req, res, next) {
              rejected_at = ?
          WHERE id = ?`,
         [
-          releasedTokenName,
+          couponNumber,
           reason,
           `${staffName} (${staffId})`,
           now,
@@ -702,16 +711,16 @@ async function staffRejectCoupon(req, res, next) {
          SET status = 'REJECTED',
              coupon_number = ?
          WHERE id = ?`,
-        [releasedTokenName, current.id]
+        [couponNumber, current.id]
       );
     }
 
-    console.log(`🚫 [Coupon Rejected] ${originalCouponNumber} rejected by ${staffName} (Reason: ${reason}). Slot ${originalCouponNumber} released back to pool!`);
+    console.log(`🚫 [Coupon Rejected] ${couponNumber} rejected by ${staffName} (Reason: ${reason}).`);
 
     return res.status(200).json({
       success: true,
-      message: `Coupon rejected successfully. Slot ${originalCouponNumber} has been freed and will be assigned to the next applicant.`,
-      releasedCouponNumber: originalCouponNumber,
+      message: `Coupon ${couponNumber} rejected successfully.`,
+      couponNumber: couponNumber,
       status: 'REJECTED',
       rejectionReason: reason,
       rejectedBy: `${staffName} (${staffId})`,
@@ -907,8 +916,7 @@ async function getCustomerCoupons(req, res, next) {
     const [countRows] = await pool.query(
       `SELECT COUNT(*) as total FROM lucky_draw_coupons 
        WHERE (REPLACE(REPLACE(phone_number, '+91', ''), ' ', '') LIKE ? 
-          OR (applicant_phone IS NOT NULL AND REPLACE(REPLACE(applicant_phone, '+91', ''), ' ', '') LIKE ?))
-         AND status != 'REJECTED'`,
+          OR (applicant_phone IS NOT NULL AND REPLACE(REPLACE(applicant_phone, '+91', ''), ' ', '') LIKE ?))`,
       [`%${cleanPhone}%`, `%${cleanPhone}%`]
     );
     const total = countRows[0].total || 0;
@@ -917,7 +925,6 @@ async function getCustomerCoupons(req, res, next) {
       `SELECT * FROM lucky_draw_coupons 
        WHERE (REPLACE(REPLACE(phone_number, '+91', ''), ' ', '') LIKE ? 
           OR (applicant_phone IS NOT NULL AND REPLACE(REPLACE(applicant_phone, '+91', ''), ' ', '') LIKE ?))
-         AND status != 'REJECTED'
        ORDER BY created_at DESC
        LIMIT ? OFFSET ?`,
       [`%${cleanPhone}%`, `%${cleanPhone}%`, limit, offset]
@@ -926,7 +933,7 @@ async function getCustomerCoupons(req, res, next) {
     const coupons = rows.map(c => ({
       id: c.id,
       eventId: c.event_id || 1,
-      couponNumber: c.coupon_number,
+      couponNumber: sanitizeCouponNumber(c.coupon_number),
       customerName: c.customer_name,
       dateOfBirth: c.date_of_birth,
       phoneNumber: c.phone_number,
@@ -934,6 +941,9 @@ async function getCustomerCoupons(req, res, next) {
       referredBy: c.referred_by || null,
       entryFee: parseFloat(c.entry_fee),
       status: c.status,
+      rejectionReason: c.rejection_reason || null,
+      rejectedByStaff: c.rejected_by_staff || null,
+      rejectedAt: c.rejected_at || null,
       staffName: c.staff_name,
       staffId: c.staff_id,
       paymentTransId: c.payment_trans_id,
