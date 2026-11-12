@@ -8,15 +8,14 @@ const {
 } = require('../utils/couponGenerator');
 
 /**
- * Helper: Sanitizes any coupon number so it is never displayed with 'REJ-' prefix or timestamp.
+ * Helper: Sanitizes coupon numbers by stripping any long legacy epoch timestamp,
+ * while cleanly preserving the 'REJ-' prefix for rejected coupons (e.g. 'REJ-8917').
  */
 function sanitizeCouponNumber(couponNumber) {
   if (!couponNumber) return '';
   const s = String(couponNumber).trim();
-  if (s.startsWith('REJ-')) {
-    return s.replace(/^REJ-/, '').replace(/-[0-9]+$/, '');
-  }
-  return s;
+  // Strip trailing epoch timestamp if present: REJ-8917-1731405928123 -> REJ-8917
+  return s.replace(/-[0-9]{10,}$/, '');
 }
 
 /**
@@ -684,7 +683,34 @@ async function staffRejectCoupon(req, res, next) {
       });
     }
 
-    const couponNumber = sanitizeCouponNumber(current.coupon_number);
+    const originalCouponNumber = current.coupon_number;
+    // Format: REJ-<couponNumber>, e.g. REJ-8917 or REJ-LENA-LD-8917 (clean, without long timestamp)
+    const baseRejNumber = originalCouponNumber.startsWith('REJ-')
+      ? sanitizeCouponNumber(originalCouponNumber)
+      : `REJ-${originalCouponNumber}`;
+
+    // Ensure uniqueness in lucky_draw_coupons in case the same recycled slot is rejected again
+    let targetRejNumber = baseRejNumber;
+    const [existingRej] = await pool.query(
+      'SELECT id FROM lucky_draw_coupons WHERE coupon_number = ? AND id != ? LIMIT 1',
+      [targetRejNumber, current.id]
+    );
+    if (existingRej.length > 0) {
+      let suffix = 2;
+      while (true) {
+        const candidateRej = `${baseRejNumber}-${suffix}`;
+        const [dup] = await pool.query(
+          'SELECT id FROM lucky_draw_coupons WHERE coupon_number = ? AND id != ? LIMIT 1',
+          [candidateRej, current.id]
+        );
+        if (dup.length === 0) {
+          targetRejNumber = candidateRej;
+          break;
+        }
+        suffix++;
+      }
+    }
+
     const now = new Date();
 
     try {
@@ -697,7 +723,7 @@ async function staffRejectCoupon(req, res, next) {
              rejected_at = ?
          WHERE id = ?`,
         [
-          couponNumber,
+          targetRejNumber,
           reason,
           `${staffName} (${staffId})`,
           now,
@@ -711,16 +737,17 @@ async function staffRejectCoupon(req, res, next) {
          SET status = 'REJECTED',
              coupon_number = ?
          WHERE id = ?`,
-        [couponNumber, current.id]
+        [targetRejNumber, current.id]
       );
     }
 
-    console.log(`🚫 [Coupon Rejected] ${couponNumber} rejected by ${staffName} (Reason: ${reason}).`);
+    console.log(`🚫 [Coupon Rejected] ${originalCouponNumber} renamed to ${targetRejNumber} by ${staffName} (Reason: ${reason}). Slot ${originalCouponNumber} recycled back to pool!`);
 
     return res.status(200).json({
       success: true,
-      message: `Coupon ${couponNumber} rejected successfully.`,
-      couponNumber: couponNumber,
+      message: `Coupon ${originalCouponNumber} rejected. Slot ${originalCouponNumber} has been freed for the next applicant.`,
+      releasedCouponNumber: originalCouponNumber,
+      couponNumber: targetRejNumber,
       status: 'REJECTED',
       rejectionReason: reason,
       rejectedBy: `${staffName} (${staffId})`,

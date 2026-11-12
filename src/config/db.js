@@ -719,25 +719,32 @@ async function initializeDatabase() {
       }
     } catch (_) {}
 
-    // Auto-repair any legacy coupons where coupon_number was mangled with REJ-
+    // Auto-clean any legacy coupons: ensure rejected coupons use clean REJ-<number> format without timestamps
     try {
       const [rejRows] = await connection.query(
-        "SELECT id, coupon_number FROM `lucky_draw_coupons` WHERE coupon_number LIKE 'REJ-%'"
+        "SELECT id, coupon_number, status FROM `lucky_draw_coupons` WHERE coupon_number LIKE 'REJ-%' OR status = 'REJECTED'"
       );
       for (const r of rejRows) {
-        const originalNum = r.coupon_number.replace(/^REJ-/, '').replace(/-[0-9]+$/, '');
-        const [conflict] = await connection.query(
-          "SELECT id FROM `lucky_draw_coupons` WHERE coupon_number = ? AND id != ?",
-          [originalNum, r.id]
-        );
-        if (conflict.length === 0) {
-          await connection.query(
-            "UPDATE `lucky_draw_coupons` SET coupon_number = ?, status = 'REJECTED' WHERE id = ?",
-            [originalNum, r.id]
+        let cleanRej = r.coupon_number;
+        if (cleanRej.startsWith('REJ-')) {
+          // Strip long trailing epoch timestamp: e.g. REJ-8917-1731405928123 -> REJ-8917
+          cleanRej = cleanRej.replace(/-[0-9]{10,}$/, '');
+        } else if (r.status === 'REJECTED') {
+          cleanRej = `REJ-${r.coupon_number}`;
+        }
+
+        if (cleanRej !== r.coupon_number) {
+          const [conflict] = await connection.query(
+            "SELECT id FROM `lucky_draw_coupons` WHERE coupon_number = ? AND id != ?",
+            [cleanRej, r.id]
           );
-          console.log(`🔧 [Auto-Repair] Restored coupon_number from ${r.coupon_number} to ${originalNum}`);
-        } else {
-          console.log(`ℹ️ [Auto-Repair] Cannot restore ${r.coupon_number} to ${originalNum} as slot is taken by id ${conflict[0].id}`);
+          if (conflict.length === 0) {
+            await connection.query(
+              "UPDATE `lucky_draw_coupons` SET coupon_number = ?, status = 'REJECTED' WHERE id = ?",
+              [cleanRej, r.id]
+            );
+            console.log(`🔧 [Auto-Clean] Formatted rejected coupon to ${cleanRej}`);
+          }
         }
       }
     } catch (_) {}
