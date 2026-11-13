@@ -919,6 +919,57 @@ async function staffDirectEntry(req, res, next) {
       });
     }
 
+    // Auto-log to Call History (work_reports) if not called from the CRM call form
+    if (!req.body.isFromCallForm) {
+      try {
+        let empIdForReport = req.staff?.id || req.user?.id;
+        if (!empIdForReport && staffId) {
+          const [sRows] = await pool.query('SELECT id FROM staff_users WHERE employee_id = ? OR id = ? LIMIT 1', [staffId, staffId]);
+          if (sRows && sRows.length > 0) empIdForReport = sRows[0].id;
+        }
+        if (!empIdForReport) {
+          const [firstStaff] = await pool.query('SELECT id FROM staff_users LIMIT 1');
+          empIdForReport = firstStaff && firstStaff[0] ? firstStaff[0].id : 1;
+        }
+
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const cleanPhoneNum = (phoneNumber || '').replace(/[^0-9]/g, '').slice(-10);
+        const couponSummary = couponNumbers.join(', ');
+        const clientCity = req.body.city || (address ? address.split(',').pop().trim() : '') || null;
+
+        await pool.query(`
+          INSERT INTO work_reports (
+            employee_id, report_date, customer_name, contact_phone, whatsapp_phone,
+            source, call_type, call_status, task_desc, call_notes,
+            project, interested_schemes, stage, qualification, site_visit,
+            work_status, calls, remarks, client_location
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          empIdForReport,
+          todayStr,
+          customerName.trim(),
+          cleanPhoneNum,
+          cleanPhoneNum,
+          referredBy ? referredBy.trim() : 'Referral',
+          'Outgoing',
+          'Connected - Willing',
+          'Coupon Entry',
+          `Sold ${couponNumbers.length} coupon(s): ${couponSummary}`,
+          'Coupon',
+          'Coupon',
+          'Booking Confirmed',
+          'Hot',
+          'Not Planned',
+          'Completed',
+          1,
+          `Direct Coupon Entry (${paymentMode || 'Direct Cash'}, Trans: ${cleanTransId || 'CASH'})`,
+          clientCity,
+        ]);
+      } catch (logErr) {
+        console.error('Failed to auto-log coupon to call history:', logErr);
+      }
+    }
+
     return res.status(201).json({
       success: true,
       message: `Walk-in customer entry created successfully (${couponNumbers.length} coupon${couponNumbers.length > 1 ? 's' : ''}).`,

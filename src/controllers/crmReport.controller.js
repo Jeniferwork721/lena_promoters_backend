@@ -22,6 +22,7 @@ async function ensureWorkReportsColumns() {
     { name: 'corner_plot', type: 'VARCHAR(10) NULL' },
     { name: 'not_interested_reason', type: 'TEXT NULL' },
     { name: 'client_location', type: 'VARCHAR(255) NULL' },
+    { name: 'interested_schemes', type: 'VARCHAR(255) NULL' },
   ];
   for (const col of extraCols) {
     try {
@@ -93,6 +94,7 @@ async function createReport(req, res, next) {
       cornerPlot,
       notInterestedReason,
       clientLocation,
+      interestedSchemes,
     } = req.body;
 
     // 1. Mandatory base fields check
@@ -167,7 +169,8 @@ async function createReport(req, res, next) {
     const finalQual = (qualification && String(qualification).trim()) ? String(qualification).trim() : 'Cold';
     const finalStage = stage ? String(stage).trim() : '';
     const finalReq = requirement ? String(requirement).trim() : '';
-    const finalProject = project ? String(project).trim() : null;
+    const finalProject = Array.isArray(project) ? project.filter(Boolean).join(', ') : (project ? String(project).trim() : null);
+    const finalSchemes = Array.isArray(interestedSchemes) ? interestedSchemes.filter(Boolean).join(', ') : (interestedSchemes ? String(interestedSchemes).trim() : null);
     const finalOffer = offer ? String(offer).trim() : null;
     const finalPropertyType = propertyType ? String(propertyType).trim() : null;
     const finalPurpose = purpose ? String(purpose).trim() : null;
@@ -183,8 +186,8 @@ async function createReport(req, res, next) {
         property_type, purpose, payment, plot, budget,
         stage, qualification, follow_up_date, site_visit, work_status,
         requirement, next_action, remarks, calls,
-        discussed_layout, corner_plot, not_interested_reason, client_location
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        discussed_layout, corner_plot, not_interested_reason, client_location, interested_schemes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       employeeId,
       customerLeadId || null,
@@ -219,6 +222,7 @@ async function createReport(req, res, next) {
       cornerPlot || null,
       notInterestedReason || null,
       clientLocation || null,
+      finalSchemes,
     ]);
 
     const reportId = insertResult.insertId;
@@ -547,6 +551,7 @@ async function getReports(req, res, next) {
         wr.corner_plot as cornerPlot,
         wr.not_interested_reason as notInterestedReason,
         wr.client_location as clientLocation,
+        wr.interested_schemes as interestedSchemes,
         wr.created_at as createdAt
       FROM work_reports wr
       JOIN staff_users s ON wr.employee_id = s.id
@@ -597,6 +602,7 @@ async function getReports(req, res, next) {
       discussedLayout: r.discussedLayout || null,
       cornerPlot: r.cornerPlot || null,
       notInterestedReason: r.notInterestedReason || null,
+      interestedSchemes: r.interestedSchemes || '',
       calls: r.calls || 1,
       createdAt: r.createdAt,
     }));
@@ -754,6 +760,7 @@ async function updateReport(req, res, next) {
       source,
       callStatus,
       requirement,
+      interestedSchemes,
     } = req.body;
 
     const updates = [];
@@ -771,6 +778,10 @@ async function updateReport(req, res, next) {
       updates.push('requirement = ?');
       values.push(requirement ? String(requirement).trim() : null);
     }
+    if (interestedSchemes !== undefined) {
+      updates.push('interested_schemes = ?');
+      values.push(Array.isArray(interestedSchemes) ? interestedSchemes.filter(Boolean).join(', ') : (interestedSchemes ? String(interestedSchemes).trim() : null));
+    }
 
     if (customer !== undefined) {
       updates.push('customer_name = ?');
@@ -782,7 +793,7 @@ async function updateReport(req, res, next) {
     }
     if (project !== undefined) {
       updates.push('project = ?');
-      values.push(project ? String(project).trim() : null);
+      values.push(Array.isArray(project) ? project.filter(Boolean).join(', ') : (project ? String(project).trim() : null));
     }
     if (stage !== undefined) {
       updates.push('stage = ?');

@@ -853,7 +853,7 @@ async function initializeDatabase() {
         \`call_time\` VARCHAR(10) NULL,
         \`call_duration\` INT NULL DEFAULT 0,
         \`call_notes\` TEXT NULL,
-        \`project\` VARCHAR(150) NULL,
+        \`project\` VARCHAR(500) NULL,
         \`offer\` VARCHAR(150) NULL,
         \`property_type\` VARCHAR(100) NULL,
         \`purpose\` VARCHAR(100) NULL,
@@ -873,6 +873,7 @@ async function initializeDatabase() {
         \`corner_plot\` VARCHAR(10) NULL,
         \`not_interested_reason\` TEXT NULL,
         \`client_location\` VARCHAR(255) NULL,
+        \`interested_schemes\` VARCHAR(255) NULL,
         \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX \`idx_rep_emp_date\` (\`employee_id\`, \`report_date\`),
@@ -889,6 +890,7 @@ async function initializeDatabase() {
       { name: 'corner_plot', type: 'VARCHAR(10) NULL' },
       { name: 'not_interested_reason', type: 'TEXT NULL' },
       { name: 'client_location', type: 'VARCHAR(255) NULL' },
+      { name: 'interested_schemes', type: 'VARCHAR(255) NULL' },
     ];
     for (const col of reportExtraCols) {
       try {
