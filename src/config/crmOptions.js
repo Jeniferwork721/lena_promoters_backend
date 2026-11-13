@@ -5,10 +5,11 @@
 const DEFAULT_CRM_OPTIONS = {
   callStatus: [
     'Connected - Willing',
-    'Follow Up Calls',
+    'Walkin-client/Direct client',
     'WhatsApp Follow-up',
     'Connected - Not Willing',
     'Call Back Requested',
+    'Follow Up Calls',
     'Not Answering',
     'Busy',
     'Switched Off',

@@ -126,19 +126,20 @@ async function createReport(req, res, next) {
     const isUnconnected = UNCONNECTED_STATUSES.includes(statusTrim);
     const isConnectedWilling = statusTrim === 'Connected - Willing';
     const isStageRequired = ['Connected - Willing', 'Follow Up Calls', 'WhatsApp Follow-up'].includes(statusTrim);
+    const isDraft = Boolean(req.body.isDraft || req.body.draft || req.body.isPartial);
 
     // Customer name is mandatory for connected calls, optional/nullable for unconnected calls
     if (!isUnconnected && (!customer || !String(customer).trim())) {
       errors.customer = 'Customer name is required when call was connected';
     }
 
-    // Project is mandatory only for Connected - Willing
-    if (isConnectedWilling && (!project || !String(project).trim())) {
+    // Project is mandatory only for Connected - Willing (skip when saving draft/exit)
+    if (!isDraft && isConnectedWilling && (!project || !String(project).trim())) {
       errors.project = 'Project is required for Connected - Willing';
     }
 
-    // Stage is required when callStatus is Connected - Willing, Follow Up Calls, or WhatsApp Follow-up
-    if (isStageRequired && (!stage || !String(stage).trim())) {
+    // Stage is required when callStatus is Connected - Willing, Follow Up Calls, or WhatsApp Follow-up (skip when saving draft/exit)
+    if (!isDraft && isStageRequired && (!stage || !String(stage).trim())) {
       errors.stage = `Stage is required when call status is '${statusTrim}'`;
     }
 
@@ -750,10 +751,26 @@ async function updateReport(req, res, next) {
       discussedLayout,
       cornerPlot,
       notInterestedReason,
+      source,
+      callStatus,
+      requirement,
     } = req.body;
 
     const updates = [];
     const values = [];
+
+    if (source !== undefined) {
+      updates.push('source = ?');
+      values.push(source ? String(source).trim() : null);
+    }
+    if (callStatus !== undefined) {
+      updates.push('call_status = ?');
+      values.push(callStatus ? String(callStatus).trim() : null);
+    }
+    if (requirement !== undefined) {
+      updates.push('requirement = ?');
+      values.push(requirement ? String(requirement).trim() : null);
+    }
 
     if (customer !== undefined) {
       updates.push('customer_name = ?');
