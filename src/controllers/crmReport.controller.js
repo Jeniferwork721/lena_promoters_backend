@@ -558,7 +558,9 @@ async function getReports(req, res, next) {
     const data = rows.map(r => ({
       id: `rep_${r.id}`,
       reportId: String(r.id),
-      employeeId: r.staffEmployeeId || String(r.employeeId),
+      employeeId: String(r.employeeId),
+      staffEmployeeId: r.staffEmployeeId || String(r.employeeId),
+      employeeCode: r.staffEmployeeId || String(r.employeeId),
       employee: r.employeeName || 'Staff Member',
       employeeName: r.employeeName || 'Staff Member',
       teamId: r.teamId ? String(r.teamId) : null,
@@ -661,7 +663,9 @@ async function getReportById(req, res, next) {
       data: {
         id: `rep_${r.id}`,
         reportId: String(r.id),
-        employeeId: r.staffEmployeeId || String(r.employee_id),
+        employeeId: String(r.employee_id),
+        staffEmployeeId: r.staffEmployeeId || String(r.employee_id),
+        employeeCode: r.staffEmployeeId || String(r.employee_id),
         employee: r.employeeName || 'Staff Member',
         employeeName: r.employeeName,
         teamId: r.teamId ? String(r.teamId) : null,
