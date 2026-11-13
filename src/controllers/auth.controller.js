@@ -177,6 +177,16 @@ async function loginWithPassword(req, res, next) {
         teamName,
         mustChangePassword: Boolean(staff.must_change_password),
       },
+      user: {
+        id: staff.employee_id ? String(staff.employee_id) : (staff.id ? `emp_${staff.id}` : ''),
+        name: staff.full_name,
+        email: staff.email,
+        phone: staff.phone_number,
+        role: (appRole || staff.role || 'emp').toLowerCase(),
+        designation: staff.designation || staff.role || 'Sales Executive',
+        teamId: staff.team_id ? String(staff.team_id) : null,
+        branch: staff.branch_location || 'Karaikudi',
+      },
     });
   } catch (err) {
     next(err);

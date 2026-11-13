@@ -632,6 +632,35 @@ async function splitCustomerLeads(req, res, next) {
   }
 }
 
+/**
+ * DELETE /customer-leads/:id (Lead, MD)
+ * Delete a single customer lead record.
+ */
+async function deleteCustomerLead(req, res, next) {
+  try {
+    const leadId = req.params.id;
+    if (!leadId) {
+      return res.status(400).json({ success: false, message: 'Lead ID is required.' });
+    }
+
+    const [result] = await pool.query('DELETE FROM customer_leads WHERE id = ?', [leadId]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer lead not found or already deleted.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Customer lead deleted successfully.',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getCustomerLeads,
   createCustomerLead,
@@ -639,4 +668,5 @@ module.exports = {
   updateCustomerLeadTeamLead,
   updateCustomerLeadEmployee,
   splitCustomerLeads,
+  deleteCustomerLead,
 };

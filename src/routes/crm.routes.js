@@ -41,6 +41,7 @@ router.post('/customer-leads/bulk', requireMD, crmLead.bulkImportCustomerLeads);
 router.patch('/customer-leads/:id/team-lead', requireMD, crmLead.updateCustomerLeadTeamLead);
 router.patch('/customer-leads/:id/employee', requireLeadOrMD, crmLead.updateCustomerLeadEmployee);
 router.post('/customer-leads/split', requireLeadOrMD, crmLead.splitCustomerLeads);
+router.delete('/customer-leads/:id', requireLeadOrMD, crmLead.deleteCustomerLead);
 
 // ==========================================================
 // 6. TASKS (Section 6: #26 to #28)
@@ -53,12 +54,14 @@ router.patch('/tasks/:id/status', crmTask.updateTaskStatus);
 // 7. WORK REPORTS (Section 7: #29 to #33 + Export + By Contact Lookup)
 // ==========================================================
 router.get('/reports/by-contact', crmReport.getReportByContact);
+router.get('/reports/daily-register', crmReport.getDailyRegister);
 router.post('/reports', crmReport.createReport);
 router.get('/reports', crmReport.getReports);
 router.get('/reports/follow-ups', crmReport.getFollowUps);
 router.get('/reports/next-entry-no', crmReport.getNextEntryNo);
 router.get('/reports/export', requireMD, crmReport.exportReports);
 router.get('/reports/:id', crmReport.getReportById);
+router.patch('/reports/:id', crmReport.updateReport);
 
 // ==========================================================
 // 8. DASHBOARD & PERFORMANCE (Section 8: #34 to #38)
