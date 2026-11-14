@@ -57,29 +57,57 @@ async function getEmployees(req, res, next) {
     const total = countResult[0].total;
 
     // Data query
-    const [rows] = await pool.query(`
-      SELECT 
-        s.id,
-        s.employee_id as employeeId,
-        s.full_name as name,
-        s.phone_number as phone,
-        s.email,
-        s.role,
-        s.branch_location as branch,
-        s.team_id as teamId,
-        t.name as teamName,
-        t.lead_id as leadId,
-        lead_user.full_name as leadName,
-        s.plain_password,
-        (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
-        s.created_at as createdAt
-      FROM staff_users s
-      LEFT JOIN teams t ON s.team_id = t.id
-      LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
-      ${whereClause}
-      ORDER BY s.id DESC
-      LIMIT ? OFFSET ?
-    `, [...params, limit, offset]);
+    let rows = [];
+    try {
+      [rows] = await pool.query(`
+        SELECT 
+          s.id,
+          s.employee_id as employeeId,
+          s.full_name as name,
+          s.phone_number as phone,
+          s.email,
+          s.role,
+          s.designation as designation,
+          s.branch_location as branch,
+          s.team_id as teamId,
+          t.name as teamName,
+          t.lead_id as leadId,
+          lead_user.full_name as leadName,
+          s.plain_password,
+          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
+          s.created_at as createdAt
+        FROM staff_users s
+        LEFT JOIN teams t ON s.team_id = t.id
+        LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
+        ${whereClause}
+        ORDER BY s.id DESC
+        LIMIT ? OFFSET ?
+      `, [...params, limit, offset]);
+    } catch (_) {
+      [rows] = await pool.query(`
+        SELECT 
+          s.id,
+          s.employee_id as employeeId,
+          s.full_name as name,
+          s.phone_number as phone,
+          s.email,
+          s.role,
+          s.branch_location as branch,
+          s.team_id as teamId,
+          t.name as teamName,
+          t.lead_id as leadId,
+          lead_user.full_name as leadName,
+          s.plain_password,
+          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
+          s.created_at as createdAt
+        FROM staff_users s
+        LEFT JOIN teams t ON s.team_id = t.id
+        LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
+        ${whereClause}
+        ORDER BY s.id DESC
+        LIMIT ? OFFSET ?
+      `, [...params, limit, offset]);
+    }
 
     const data = rows.map(r => ({
       id: String(r.id),
@@ -223,7 +251,19 @@ async function createEmployee(req, res, next) {
 
     // If created as Team Lead, create or link their team
     if (isLeadCreation) {
-      const finalTeamName = String(req.body.teamName || `${cleanName}'s Team`).trim();
+      let finalTeamName = String(req.body.teamName || `${cleanName}'s Team`).trim();
+      const [dupName] = await pool.query('SELECT id FROM teams WHERE LOWER(name) = LOWER(?) LIMIT 1', [finalTeamName]);
+      if (dupName.length > 0) {
+        if (req.body.teamName && req.body.teamName.trim()) {
+          return res.status(400).json({
+            success: false,
+            message: `A team named "${finalTeamName}" already exists. Please choose a different team name.`,
+            errors: { teamName: 'Already exists' },
+          });
+        } else {
+          finalTeamName = `${cleanName}'s Team (${newStaffId})`;
+        }
+      }
       const [teamInsert] = await pool.query(
         'INSERT INTO teams (name, lead_id) VALUES (?, ?)',
         [finalTeamName, newStaffId]
@@ -267,26 +307,51 @@ async function getEmployeeById(req, res, next) {
     const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes((req.staff.role || '').toUpperCase());
     const callerId = String(req.staff?.id || '');
 
-    const [rows] = await pool.query(`
-      SELECT 
-        s.id,
-        s.employee_id as employeeId,
-        s.full_name as name,
-        s.phone_number as phone,
-        s.email,
-        s.role,
-        s.team_id as teamId,
-        t.name as teamName,
-        t.lead_id as leadId,
-        lead_user.full_name as leadName,
-        s.plain_password,
-        (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
-        s.created_at as createdAt
-      FROM staff_users s
-      LEFT JOIN teams t ON s.team_id = t.id
-      LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
-      WHERE s.id = ? AND s.is_active = 1 LIMIT 1
-    `, [employeeId]);
+    let rows = [];
+    try {
+      [rows] = await pool.query(`
+        SELECT 
+          s.id,
+          s.employee_id as employeeId,
+          s.full_name as name,
+          s.phone_number as phone,
+          s.email,
+          s.role,
+          s.designation as designation,
+          s.team_id as teamId,
+          t.name as teamName,
+          t.lead_id as leadId,
+          lead_user.full_name as leadName,
+          s.plain_password,
+          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
+          s.created_at as createdAt
+        FROM staff_users s
+        LEFT JOIN teams t ON s.team_id = t.id
+        LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
+        WHERE s.id = ? AND s.is_active = 1 LIMIT 1
+      `, [employeeId]);
+    } catch (_) {
+      [rows] = await pool.query(`
+        SELECT 
+          s.id,
+          s.employee_id as employeeId,
+          s.full_name as name,
+          s.phone_number as phone,
+          s.email,
+          s.role,
+          s.team_id as teamId,
+          t.name as teamName,
+          t.lead_id as leadId,
+          lead_user.full_name as leadName,
+          s.plain_password,
+          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
+          s.created_at as createdAt
+        FROM staff_users s
+        LEFT JOIN teams t ON s.team_id = t.id
+        LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
+        WHERE s.id = ? AND s.is_active = 1 LIMIT 1
+      `, [employeeId]);
+    }
 
     if (rows.length === 0) {
       return res.status(404).json({
@@ -316,7 +381,8 @@ async function getEmployeeById(req, res, next) {
         name: employee.name,
         phone: employee.phone,
         email: employee.email,
-        role: 'employee',
+        role: employee.role || 'employee',
+        designation: employee.designation || employee.role || 'Sales Executive',
         teamId: employee.teamId ? String(employee.teamId) : null,
         teamName: employee.teamName || null,
         leadId: employee.leadId ? String(employee.leadId) : null,
@@ -403,7 +469,7 @@ async function updateEmployeeAssignment(req, res, next) {
 async function updateEmployee(req, res, next) {
   try {
     const employeeId = req.params.id;
-    const { name, phone, email, role, leadId, teamName, branch } = req.body;
+    const { name, phone, email, role, designation, leadId, teamName, branch } = req.body;
 
     const [empRows] = await pool.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [employeeId]);
     if (empRows.length === 0) {
@@ -416,7 +482,7 @@ async function updateEmployee(req, res, next) {
     const cleanEmail = String(email || currentEmp.email || '').trim().toLowerCase();
     const cleanBranch = String(branch || currentEmp.branch_location || 'Karaikudi – Head Office').trim();
     const cleanRole = String(role || currentEmp.role || 'SALES_EXECUTIVE').trim().toUpperCase();
-    const cleanDesignation = String(designation || role || currentEmp.designation || currentEmp.role || 'Sales Executive').trim();
+    const cleanDesignation = String((designation !== undefined ? designation : (role || currentEmp.designation || currentEmp.role || 'Sales Executive')) || '').trim();
     const isTargetLead = ['MANAGER', 'LEAD', 'TEAM_LEAD', 'SALES_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER'].includes(cleanRole);
 
     if (!cleanName) {
@@ -444,21 +510,52 @@ async function updateEmployee(req, res, next) {
       if (teamRows.length > 0) {
         finalTeamId = teamRows[0].id;
         if (teamName && teamName.trim()) {
-          await pool.query('UPDATE teams SET name = ? WHERE id = ?', [teamName.trim(), finalTeamId]);
+          const newTeamName = teamName.trim();
+          const [dupName] = await pool.query(
+            'SELECT id FROM teams WHERE LOWER(name) = LOWER(?) AND id != ? LIMIT 1',
+            [newTeamName, finalTeamId]
+          );
+          if (dupName.length > 0) {
+            return res.status(400).json({
+              success: false,
+              message: `A team named "${newTeamName}" already exists. Please choose a different team name.`,
+              errors: { teamName: 'Already exists' },
+            });
+          }
+          await pool.query('UPDATE teams SET name = ? WHERE id = ?', [newTeamName, finalTeamId]);
         }
       } else {
         // Create a new team for this lead
-        const finalTeamName = String(teamName || `${cleanName}'s Team`).trim();
+        let desiredTeamName = String(teamName || `${cleanName}'s Team`).trim();
+        const [dupName] = await pool.query('SELECT id FROM teams WHERE LOWER(name) = LOWER(?) LIMIT 1', [desiredTeamName]);
+        if (dupName.length > 0) {
+          if (teamName && teamName.trim()) {
+            return res.status(400).json({
+              success: false,
+              message: `A team named "${desiredTeamName}" already exists. Please choose a different team name.`,
+              errors: { teamName: 'Already exists' },
+            });
+          } else {
+            desiredTeamName = `${cleanName}'s Team (${employeeId})`;
+          }
+        }
         const [insertTeam] = await pool.query(
           'INSERT INTO teams (name, lead_id) VALUES (?, ?)',
-          [finalTeamName, employeeId]
+          [desiredTeamName, employeeId]
         );
         finalTeamId = insertTeam.insertId;
       }
     } else {
       // Setting as common employee / telecaller / other role
       // If was previously a lead of a team, clear lead_id on that team
-      await pool.query('UPDATE teams SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+      try {
+        await pool.query('UPDATE teams SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+      } catch (_) {
+        try {
+          await pool.query('ALTER TABLE teams MODIFY COLUMN lead_id INT NULL');
+          await pool.query('UPDATE teams SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+        } catch (_) {}
+      }
 
       if (leadId) {
         const [targetTeam] = await pool.query('SELECT id FROM teams WHERE lead_id = ? LIMIT 1', [leadId]);
@@ -484,42 +581,67 @@ async function updateEmployee(req, res, next) {
     }
 
     // Fetch updated record with team details
-    const [updatedRows] = await pool.query(`
-      SELECT 
-        s.id,
-        s.employee_id as employeeId,
-        s.full_name as name,
-        s.phone_number as phone,
-        s.email,
-        s.role,
-        s.branch_location as branch,
-        s.team_id as teamId,
-        t.name as teamName,
-        t.lead_id as leadId,
-        lead_user.full_name as leadName,
-        s.plain_password as password,
-        (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount
-      FROM staff_users s
-      LEFT JOIN teams t ON s.team_id = t.id
-      LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
-      WHERE s.id = ? LIMIT 1
-    `, [employeeId]);
+    let updatedRows = [];
+    try {
+      [updatedRows] = await pool.query(`
+        SELECT 
+          s.id,
+          s.employee_id as employeeId,
+          s.full_name as name,
+          s.phone_number as phone,
+          s.email,
+          s.role,
+          s.designation as designation,
+          s.branch_location as branch,
+          s.team_id as teamId,
+          t.name as teamName,
+          t.lead_id as leadId,
+          lead_user.full_name as leadName,
+          s.plain_password as password,
+          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount
+        FROM staff_users s
+        LEFT JOIN teams t ON s.team_id = t.id
+        LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
+        WHERE s.id = ? LIMIT 1
+      `, [employeeId]);
+    } catch (_) {
+      [updatedRows] = await pool.query(`
+        SELECT 
+          s.id,
+          s.employee_id as employeeId,
+          s.full_name as name,
+          s.phone_number as phone,
+          s.email,
+          s.role,
+          s.branch_location as branch,
+          s.team_id as teamId,
+          t.name as teamName,
+          t.lead_id as leadId,
+          lead_user.full_name as leadName,
+          s.plain_password as password,
+          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount
+        FROM staff_users s
+        LEFT JOIN teams t ON s.team_id = t.id
+        LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
+        WHERE s.id = ? LIMIT 1
+      `, [employeeId]);
+    }
 
-    const updated = updatedRows[0];
+    const updated = updatedRows[0] || {};
 
     return res.status(200).json({
       success: true,
       message: 'Staff profile updated successfully.',
       data: {
-        id: String(updated.id),
-        employeeId: updated.employeeId,
-        name: updated.name,
-        phone: updated.phone,
-        email: updated.email,
-        role: updated.role,
-        designation: cleanDesignation,
+        id: String(updated.id || employeeId),
+        employeeId: updated.employeeId || '',
+        name: updated.name || cleanName,
+        phone: updated.phone || cleanPhone,
+        email: updated.email || cleanEmail,
+        role: updated.role || finalRole,
+        designation: updated.designation || cleanDesignation,
         branch: updated.branch || cleanBranch,
-        teamId: updated.teamId ? String(updated.teamId) : null,
+        teamId: updated.teamId ? String(updated.teamId) : (finalTeamId ? String(finalTeamId) : null),
         teamName: updated.teamName || null,
         leadId: updated.leadId ? String(updated.leadId) : null,
         leadName: updated.leadName || null,
