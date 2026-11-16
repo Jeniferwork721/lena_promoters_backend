@@ -61,6 +61,160 @@ async function upsertCustomerRecord(connOrPool, { customerName, phoneNumber, add
 }
 
 /**
+ * Helper: Identifies and resolves an active staff member from staff_users
+ * by employee ID, staff ID, numeric ID, or name (including strings like "Name (LP-EMP-01)").
+ */
+async function resolveStaffMember(connOrPool, refOrStaff) {
+  if (!refOrStaff) return null;
+  const str = String(refOrStaff).trim();
+  if (!str || str.toLowerCase().includes('company direct') || str.toLowerCase() === 'direct') {
+    return null;
+  }
+
+  // Check for pattern like "Full Name (EMP-ID)"
+  let extractedCode = '';
+  let extractedName = str;
+  const match = str.match(/\(([^)]+)\)/);
+  if (match) {
+    extractedCode = match[1].trim();
+    extractedName = str.replace(/\([^)]+\)/, '').trim();
+  }
+
+  try {
+    // 1. Try matching extracted code to employee_id
+    if (extractedCode) {
+      const [byCode] = await connOrPool.query(
+        'SELECT id, employee_id, full_name, team_id, branch_location FROM staff_users WHERE employee_id = ? AND is_active = 1 LIMIT 1',
+        [extractedCode]
+      );
+      if (byCode && byCode.length > 0) return byCode[0];
+    }
+
+    // 2. Try exact match on employee_id or string/numeric ID
+    const [byEmpId] = await connOrPool.query(
+      'SELECT id, employee_id, full_name, team_id, branch_location FROM staff_users WHERE (employee_id = ? OR id = ?) AND is_active = 1 LIMIT 1',
+      [str, isNaN(Number(str)) ? -1 : Number(str)]
+    );
+    if (byEmpId && byEmpId.length > 0) return byEmpId[0];
+
+    // 3. Try exact match on full_name
+    const targetName = extractedName || str;
+    const [byName] = await connOrPool.query(
+      'SELECT id, employee_id, full_name, team_id, branch_location FROM staff_users WHERE full_name = ? AND is_active = 1 LIMIT 1',
+      [targetName]
+    );
+    if (byName && byName.length > 0) return byName[0];
+
+    // 4. Try fuzzy match on full_name
+    const [byLike] = await connOrPool.query(
+      'SELECT id, employee_id, full_name, team_id, branch_location FROM staff_users WHERE full_name LIKE ? AND is_active = 1 LIMIT 1',
+      [`%${targetName}%`]
+    );
+    if (byLike && byLike.length > 0) return byLike[0];
+
+    return null;
+  } catch (err) {
+    console.error('⚠️ [resolveStaffMember] Error finding staff:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Helper: Automatically logs coupon issuance or customer referral coupon
+ * into the `work_reports` (Call History) table.
+ * Avoids duplicate entries by checking if this coupon number sequence is already logged.
+ */
+async function logCouponToWorkReports(connOrPool, {
+  staffUser, // { id, employee_id, full_name, team_id }
+  customerName,
+  phoneNumber,
+  address,
+  city,
+  referredBy,
+  couponNumbers = [],
+  quantity = 1,
+  totalAmount = 500,
+  paymentMode = 'Direct Cash',
+  paymentTransId = '',
+  isCustomerReferral = false,
+  callType = null,
+}) {
+  if (!staffUser || !staffUser.id) return null;
+
+  try {
+    const cleanPhone = (phoneNumber || '').replace(/[^0-9]/g, '').slice(-10);
+    const couponSummary = couponNumbers.join(', ');
+    const firstCoupon = couponNumbers[0] || '';
+
+    // Check if an entry for this coupon/customer was already logged today or with this coupon number
+    if (firstCoupon) {
+      const [existing] = await connOrPool.query(
+        `SELECT id FROM work_reports 
+         WHERE employee_id = ? 
+           AND (call_notes LIKE ? OR (contact_phone = ? AND task_desc LIKE '%Coupon%' AND report_date = CURDATE()))
+         LIMIT 1`,
+        [staffUser.id, `%${firstCoupon}%`, cleanPhone]
+      );
+      if (existing && existing.length > 0) {
+        console.log(`ℹ️ [Work Reports Sync] Coupon call history already exists (ID: ${existing[0].id}, Coupon: ${firstCoupon}).`);
+        return existing[0].id;
+      }
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const clientLocation = city || (address ? address.split(',').pop().trim() : '') || null;
+    const finalCallType = callType || (isCustomerReferral ? 'Incoming' : 'Outgoing');
+    const finalSource = isCustomerReferral
+      ? 'Referral'
+      : (referredBy && !referredBy.includes('Company Direct') ? 'Referral' : 'Walk-in');
+    const finalTaskDesc = isCustomerReferral
+      ? 'Coupon Entry (Customer Referral)'
+      : 'Coupon Entry';
+    const finalCallNotes = isCustomerReferral
+      ? `[Customer Referral Coupon: #${couponSummary} (${couponNumbers.length} ticket(s), ₹${totalAmount})]`
+      : `[Coupon Issued: #${couponSummary} (${couponNumbers.length} ticket(s), ₹${totalAmount})]`;
+    const finalRemarks = isCustomerReferral
+      ? `Customer applied online with employee referral: ${referredBy || staffUser.full_name} (${paymentMode}, Trans: ${paymentTransId || 'UPI'})`
+      : `Staff mobile coupon entry (${paymentMode}, Trans: ${paymentTransId || 'DIRECT_CASH'})`;
+
+    const [res] = await connOrPool.query(`
+      INSERT INTO work_reports (
+        employee_id, report_date, customer_name, contact_phone, whatsapp_phone,
+        source, call_type, call_status, task_desc, call_notes,
+        project, interested_schemes, stage, qualification, site_visit,
+        work_status, calls, remarks, client_location
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      staffUser.id,
+      todayStr,
+      (customerName || '').trim() || 'Valued Customer',
+      cleanPhone || '9999999999',
+      cleanPhone || '9999999999',
+      finalSource,
+      finalCallType,
+      'Connected - Willing',
+      finalTaskDesc,
+      finalCallNotes,
+      'Coupon',
+      'Coupon',
+      'Booking Confirmed',
+      'Hot',
+      'Not Planned',
+      'Completed',
+      1,
+      finalRemarks,
+      clientLocation,
+    ]);
+
+    console.log(`✅ [Work Reports Sync] Logged coupon entry to Call History for ${staffUser.full_name} (${staffUser.employee_id}, Report ID: ${res.insertId}).`);
+    return res.insertId;
+  } catch (err) {
+    console.error('⚠️ [Work Reports Sync] Failed to log coupon to Call History:', err.message);
+    return null;
+  }
+}
+
+/**
  * 1. Get Lucky Draw Active Scheme Information
  */
 async function getActiveScheme(req, res, next) {
@@ -187,6 +341,11 @@ async function customerApply(req, res, next) {
 
     const createdCoupons = [];
 
+    // Check if referred by an active employee
+    const referringStaff = await resolveStaffMember(pool, finalReferredBy);
+    const attributedStaffId = referringStaff ? referringStaff.employee_id : null;
+    const attributedStaffName = referringStaff ? referringStaff.full_name : null;
+
     for (let i = 0; i < couponNumbers.length; i++) {
       const cNum = couponNumbers[i];
       const couponId = `ld-${nowTs}-${i}-${Math.random().toString(36).substring(2, 6)}`;
@@ -195,8 +354,8 @@ async function customerApply(req, res, next) {
       try {
         await pool.query(
           `INSERT INTO lucky_draw_coupons 
-            (id, event_id, coupon_number, customer_name, date_of_birth, phone_number, email, address, referred_by, applicant_phone, entry_fee, status, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, event_id, coupon_number, customer_name, date_of_birth, phone_number, email, address, referred_by, applicant_phone, entry_fee, status, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url, staff_id, staff_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             couponId,
             activeEventId,
@@ -214,14 +373,16 @@ async function customerApply(req, res, next) {
             paymentMode || 'UPI QR',
             paymentScreenshotName || null,
             paymentScreenshotUrl || null,
+            attributedStaffId,
+            attributedStaffName,
           ]
         );
       } catch (insertErr) {
         // Fallback for legacy DB if event_id column is not yet present
         await pool.query(
           `INSERT INTO lucky_draw_coupons 
-            (id, coupon_number, customer_name, date_of_birth, phone_number, email, address, referred_by, applicant_phone, entry_fee, status, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, coupon_number, customer_name, date_of_birth, phone_number, email, address, referred_by, applicant_phone, entry_fee, status, payment_trans_id, payment_mode, payment_screenshot_name, payment_screenshot_url, staff_id, staff_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             couponId,
             cNum,
@@ -238,6 +399,8 @@ async function customerApply(req, res, next) {
             paymentMode || 'UPI QR',
             paymentScreenshotName || null,
             paymentScreenshotUrl || null,
+            attributedStaffId,
+            attributedStaffName,
           ]
         );
       }
@@ -255,12 +418,41 @@ async function customerApply(req, res, next) {
         applicantPhone,
         entryFee,
         status,
+        staffId: attributedStaffId,
+        staffName: attributedStaffName,
         paymentTransId: finalTransId,
         paymentMode: paymentMode || 'UPI QR',
         paymentScreenshotName: paymentScreenshotName || null,
         paymentScreenshotUrl: paymentScreenshotUrl || null,
         isBonus,
         createdAt: createdAtIso,
+      });
+    }
+
+    // 1. Sync customer profile into customers table
+    await upsertCustomerRecord(pool, {
+      customerName,
+      phoneNumber,
+      address,
+      dateOfBirth,
+      email: recipientEmail,
+      referredBy: finalReferredBy,
+    });
+
+    // 2. If customer referred by an employee, auto-log entry into Call History (work_reports) for that employee
+    if (referringStaff) {
+      await logCouponToWorkReports(pool, {
+        staffUser: referringStaff,
+        customerName,
+        phoneNumber,
+        address,
+        referredBy: finalReferredBy,
+        couponNumbers,
+        quantity,
+        totalAmount,
+        paymentMode: paymentMode || 'UPI QR',
+        paymentTransId: finalTransId,
+        isCustomerReferral: true,
       });
     }
 
@@ -602,7 +794,7 @@ async function staffEditAndVerify(req, res, next) {
       `UPDATE lucky_draw_coupons SET
         coupon_number = ?,
         customer_name = ?,
-        date_of_birth = ?,
+        dateOfBirth = ?,
         phone_number = ?,
         address = ?,
         referred_by = ?,
@@ -633,6 +825,32 @@ async function staffEditAndVerify(req, res, next) {
         id,
       ]
     );
+
+    // Auto-log to Call History (work_reports) for processing staff or referred staff
+    try {
+      const activeStaff = await resolveStaffMember(
+        pool,
+        staffId || current.staff_id || staffName || current.staff_name || req.staff?.employeeId || req.staff?.id || finalReferred
+      );
+      if (activeStaff) {
+        await logCouponToWorkReports(pool, {
+          staffUser: activeStaff,
+          customerName: customerName ?? current.customer_name,
+          phoneNumber: phoneNumber ?? current.phone_number,
+          address: address ?? current.address,
+          referredBy: finalReferred,
+          couponNumbers: [finalCouponNo],
+          quantity: 1,
+          totalAmount: parseFloat(current.entry_fee) || 500,
+          paymentMode: paymentMode ?? current.payment_mode ?? 'Direct Cash',
+          paymentTransId: paymentTransId ?? current.payment_trans_id ?? '',
+          isCustomerReferral: Boolean(finalReferred && !finalReferred.includes('Company Direct')),
+          callType: 'Outgoing',
+        });
+      }
+    } catch (wrErr) {
+      console.warn('⚠️ [staffEditAndVerify] Call History sync notice:', wrErr.message);
+    }
 
     return res.status(200).json({
       success: true,
@@ -922,49 +1140,24 @@ async function staffDirectEntry(req, res, next) {
     // Auto-log to Call History (work_reports) if not called from the CRM call form
     if (!req.body.isFromCallForm) {
       try {
-        let empIdForReport = req.staff?.id || req.user?.id;
-        if (!empIdForReport && staffId) {
-          const [sRows] = await pool.query('SELECT id FROM staff_users WHERE employee_id = ? OR id = ? LIMIT 1', [staffId, staffId]);
-          if (sRows && sRows.length > 0) empIdForReport = sRows[0].id;
+        const staffMember = await resolveStaffMember(pool, req.staff?.id || staffId || staffName || req.staff?.employeeId || referredBy);
+        if (staffMember) {
+          await logCouponToWorkReports(pool, {
+            staffUser: staffMember,
+            customerName: customerName.trim(),
+            phoneNumber: phoneNumber.trim(),
+            address: address.trim(),
+            city: req.body.city,
+            referredBy,
+            couponNumbers,
+            quantity: qty,
+            totalAmount: (qty * entryFee),
+            paymentMode: paymentMode || 'Direct Cash',
+            paymentTransId: cleanTransId || 'DIRECT_CASH',
+            isCustomerReferral: false,
+            callType: 'Outgoing',
+          });
         }
-        if (!empIdForReport) {
-          const [firstStaff] = await pool.query('SELECT id FROM staff_users LIMIT 1');
-          empIdForReport = firstStaff && firstStaff[0] ? firstStaff[0].id : 1;
-        }
-
-        const todayStr = new Date().toISOString().slice(0, 10);
-        const cleanPhoneNum = (phoneNumber || '').replace(/[^0-9]/g, '').slice(-10);
-        const couponSummary = couponNumbers.join(', ');
-        const clientCity = req.body.city || (address ? address.split(',').pop().trim() : '') || null;
-
-        await pool.query(`
-          INSERT INTO work_reports (
-            employee_id, report_date, customer_name, contact_phone, whatsapp_phone,
-            source, call_type, call_status, task_desc, call_notes,
-            project, interested_schemes, stage, qualification, site_visit,
-            work_status, calls, remarks, client_location
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-          empIdForReport,
-          todayStr,
-          customerName.trim(),
-          cleanPhoneNum,
-          cleanPhoneNum,
-          referredBy ? referredBy.trim() : 'Referral',
-          'Outgoing',
-          'Connected - Willing',
-          'Coupon Entry',
-          `Sold ${couponNumbers.length} coupon(s): ${couponSummary}`,
-          'Coupon',
-          'Coupon',
-          'Booking Confirmed',
-          'Hot',
-          'Not Planned',
-          'Completed',
-          1,
-          `Direct Coupon Entry (${paymentMode || 'Direct Cash'}, Trans: ${cleanTransId || 'CASH'})`,
-          clientCity,
-        ]);
       } catch (logErr) {
         console.error('Failed to auto-log coupon to call history:', logErr);
       }
@@ -1134,6 +1327,22 @@ async function ensureLuckyDrawEventsTable() {
     } catch (_) {}
     try {
       await pool.query("ALTER TABLE lucky_draw_coupons ADD COLUMN rejected_at DATETIME NULL AFTER rejected_by_staff");
+    } catch (_) {}
+
+    // Auto-attribute legacy coupons where referred_by specifies an employee but staff_id / staff_name is empty
+    try {
+      await pool.query(`
+        UPDATE lucky_draw_coupons c
+        JOIN staff_users s ON (
+          c.referred_by LIKE CONCAT('%(', s.employee_id, ')')
+          OR c.referred_by = s.full_name
+          OR c.referred_by LIKE CONCAT('%', s.employee_id, '%')
+        )
+        SET c.staff_id = s.employee_id, c.staff_name = s.full_name
+        WHERE (c.staff_id IS NULL OR c.staff_id = '' OR c.staff_id = 'ONLINE')
+          AND c.referred_by IS NOT NULL 
+          AND c.referred_by NOT LIKE '%Company Direct%'
+      `);
     } catch (_) {}
   } catch (err) {
     console.warn('⚠️ [ensureLuckyDrawEventsTable] DB init notice:', err.message);
