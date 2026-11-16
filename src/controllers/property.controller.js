@@ -95,11 +95,25 @@ function formatProperty(plot) {
 }
 
 /**
- * 1. Get All Properties (with filtering for search, city, and featured)
+ * 1. Get All Properties (with filtering for search, city, category, approval, availability, offers, price range, and sorting)
  */
 async function getAllProperties(req, res, next) {
   try {
-    const { city, search, isFeatured, ongoing } = req.query;
+    const {
+      city,
+      search,
+      isFeatured,
+      ongoing,
+      category,
+      approval,
+      availableOnly,
+      cornerOnly,
+      hasOffers,
+      minPrice,
+      maxPrice,
+      sortBy,
+      order,
+    } = req.query;
 
     let query = 'SELECT * FROM properties WHERE (active = 1 OR active IS NULL)';
     const params = [];
@@ -107,6 +121,38 @@ async function getAllProperties(req, res, next) {
     if (city && city !== 'All Locations' && city !== 'All') {
       query += ' AND city LIKE ?';
       params.push(`%${city}%`);
+    }
+
+    if (category && category !== 'All Plots' && category !== 'All') {
+      query += ' AND category LIKE ?';
+      params.push(`%${category}%`);
+    }
+
+    if (approval && approval !== 'All' && approval !== 'All Approvals') {
+      query += ' AND approval LIKE ?';
+      params.push(`%${approval}%`);
+    }
+
+    if (availableOnly === 'true' || availableOnly === '1') {
+      query += ' AND (available_plots > 0 OR available_plots IS NULL)';
+    }
+
+    if (cornerOnly === 'true' || cornerOnly === '1') {
+      query += ' AND corner_plots = 1';
+    }
+
+    if (hasOffers === 'true' || hasOffers === '1') {
+      query += ' AND (offers IS NOT NULL AND offers != "[]" AND offers != "")';
+    }
+
+    if (minPrice && !isNaN(parseFloat(minPrice))) {
+      query += ' AND COALESCE(price_per_cent, 0) >= ?';
+      params.push(parseFloat(minPrice));
+    }
+
+    if (maxPrice && !isNaN(parseFloat(maxPrice))) {
+      query += ' AND COALESCE(price_per_cent, 0) <= ?';
+      params.push(parseFloat(maxPrice));
     }
 
     if (isFeatured !== undefined) {
@@ -125,7 +171,26 @@ async function getAllProperties(req, res, next) {
       params.push(term, term, term, term);
     }
 
-    query += ' ORDER BY is_featured DESC, created_at DESC';
+    // Determine Sorting: Default is Alphabetical A to Z ("basically it need to shown Alphabatical wise")
+    const rawSort = (sortBy || 'alphabetical').toLowerCase();
+    const isDesc = (order && order.toLowerCase() === 'desc') || rawSort.endsWith('_desc') || rawSort === 'za';
+
+    if (rawSort === 'price_asc' || rawSort === 'price_low' || (rawSort.includes('price') && !isDesc)) {
+      query += ' ORDER BY COALESCE(NULLIF(price_per_cent, 0), 999999999) ASC, title ASC';
+    } else if (rawSort === 'price_desc' || rawSort === 'price_high' || (rawSort.includes('price') && isDesc)) {
+      query += ' ORDER BY COALESCE(price_per_cent, 0) DESC, title ASC';
+    } else if (rawSort === 'available' || rawSort === 'availability' || rawSort === 'plots') {
+      query += ' ORDER BY available_plots DESC, title ASC';
+    } else if (rawSort === 'featured') {
+      query += ' ORDER BY is_featured DESC, title ASC';
+    } else if (rawSort === 'newest') {
+      query += ' ORDER BY created_at DESC, title ASC';
+    } else if (rawSort === 'alphabetical_desc' || rawSort === 'title_desc' || rawSort === 'za' || (rawSort.includes('title') && isDesc)) {
+      query += ' ORDER BY title DESC';
+    } else {
+      // Default: Alphabetical (A to Z)
+      query += ' ORDER BY title ASC';
+    }
 
     const [rows] = await pool.query(query, params);
     const properties = rows.map(formatProperty);
@@ -695,6 +760,30 @@ async function getCities(req, res, next) {
   }
 }
 
+/**
+ * 8. Get Filter Metadata (Cities, Categories, Approvals)
+ */
+async function getFilterMeta(req, res, next) {
+  try {
+    const [cityRows] = await pool.query('SELECT DISTINCT city FROM properties WHERE (active = 1 OR active IS NULL) AND city IS NOT NULL AND city != "" ORDER BY city ASC');
+    const [catRows] = await pool.query('SELECT DISTINCT category FROM properties WHERE (active = 1 OR active IS NULL) AND category IS NOT NULL AND category != "" ORDER BY category ASC');
+    const [approvalRows] = await pool.query('SELECT DISTINCT approval FROM properties WHERE (active = 1 OR active IS NULL) AND approval IS NOT NULL AND approval != "" ORDER BY approval ASC');
+
+    const cities = cityRows.map(r => r.city).filter(Boolean);
+    const categories = catRows.map(r => r.category).filter(Boolean);
+    const approvals = approvalRows.map(r => r.approval).filter(Boolean);
+
+    return res.status(200).json({
+      success: true,
+      cities: ['All Locations', ...cities],
+      categories: ['All Plots', ...categories],
+      approvals: ['All Approvals', ...approvals],
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getAllProperties,
   getPropertyById,
@@ -703,4 +792,5 @@ module.exports = {
   bulkUpdateImages,
   deleteProperty,
   getCities,
+  getFilterMeta,
 };
