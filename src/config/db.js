@@ -277,6 +277,9 @@ async function initializeDatabase() {
         \`address\` TEXT NULL,
         \`referred_by\` VARCHAR(150) NULL,
         \`date_of_birth\` DATE NULL,
+        \`alternative_phone\` VARCHAR(25) NULL,
+        \`marital_status\` VARCHAR(20) NULL,
+        \`marriage_date\` DATE NULL,
         \`is_active\` TINYINT(1) NOT NULL DEFAULT 1,
         \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -336,6 +339,9 @@ async function initializeDatabase() {
         { name: 'dream_land_size', type: 'VARCHAR(100) NULL' },
         { name: 'occupation', type: 'VARCHAR(100) NULL' },
         { name: 'profile_pic', type: 'TEXT NULL' },
+        { name: 'alternative_phone', type: 'VARCHAR(25) NULL' },
+        { name: 'marital_status', type: 'VARCHAR(20) NULL' },
+        { name: 'marriage_date', type: 'DATE NULL' },
       ];
       for (const col of extendedCols) {
         const [exists] = await connection.query(`SHOW COLUMNS FROM \`customers\` LIKE "${col.name}"`);

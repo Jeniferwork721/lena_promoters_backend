@@ -911,7 +911,8 @@ async function loginCustomerWithOtp(req, res, next) {
     if (isEmail) {
       const [rows] = await pool.query(
         `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, 
-                aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic 
+                aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic,
+                alternative_phone, marital_status, marriage_date 
          FROM customers WHERE email = ? AND is_active = 1 LIMIT 1`,
         [cleanInput]
       );
@@ -919,7 +920,8 @@ async function loginCustomerWithOtp(req, res, next) {
     } else {
       const [rows] = await pool.query(
         `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, 
-                aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic 
+                aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic,
+                alternative_phone, marital_status, marriage_date 
          FROM customers 
          WHERE (phone_number = ? OR phone_number LIKE ? OR REPLACE(phone_number, '+91', '') LIKE ?) 
            AND is_active = 1 LIMIT 1`,
@@ -960,6 +962,9 @@ async function loginCustomerWithOtp(req, res, next) {
         dreamLandSize: customer.dream_land_size || '',
         occupation: customer.occupation || '',
         profilePic: customer.profile_pic || '',
+        alternativePhone: customer.alternative_phone || '',
+        maritalStatus: customer.marital_status || '',
+        marriageDate: customer.marriage_date || '',
       },
     });
   } catch (err) {
@@ -1050,7 +1055,8 @@ async function registerCustomer(req, res, next) {
 
     const [rows] = await pool.query(
       `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, 
-              aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic 
+              aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic,
+              alternative_phone, marital_status, marriage_date 
        FROM customers WHERE id = ?`,
       [customerId]
     );
@@ -1080,6 +1086,9 @@ async function registerCustomer(req, res, next) {
         dreamLandSize: customer.dream_land_size || '',
         occupation: customer.occupation || '',
         profilePic: customer.profile_pic || '',
+        alternativePhone: customer.alternative_phone || '',
+        maritalStatus: customer.marital_status || '',
+        marriageDate: customer.marriage_date || '',
       },
     });
   } catch (err) {
@@ -1252,6 +1261,9 @@ async function updateCustomerProfile(req, res, next) {
       dreamLandSize,
       occupation,
       profilePic,
+      alternativePhone,
+      maritalStatus,
+      marriageDate,
     } = req.body;
     if (!phoneNumber) {
       return res.status(400).json({ success: false, message: 'Phone number is required to update profile' });
@@ -1284,62 +1296,64 @@ async function updateCustomerProfile(req, res, next) {
       }
     }
 
-    await pool.query(
-      `UPDATE customers SET 
-         full_name = COALESCE(?, full_name),
-         email = COALESCE(?, email),
-         address = COALESCE(?, address),
-         date_of_birth = COALESCE(?, date_of_birth),
-         street = COALESCE(?, street),
-         landmark = COALESCE(?, landmark),
-         city = COALESCE(?, city),
-         pincode = COALESCE(?, pincode),
-         aadhar_number = COALESCE(?, aadhar_number),
-         pan_number = COALESCE(?, pan_number),
-         nominee_name = COALESCE(?, nominee_name),
-         dream_land_size = COALESCE(?, dream_land_size),
-         occupation = COALESCE(?, occupation),
-         profile_pic = COALESCE(?, profile_pic)
-       WHERE id = ?`,
-      [
-        fullName?.trim() || null,
-        email?.trim() || null,
-        address?.trim() || null,
-        dateOfBirth || null,
-        street?.trim() || null,
-        landmark?.trim() || null,
-        city?.trim() || null,
-        pincode?.trim() || null,
-        aadharNumber?.trim() || null,
-        panNumber?.trim() || null,
-        nomineeName?.trim() || null,
-        dreamLandSize?.trim() || null,
-        occupation?.trim() || null,
-        profilePic?.trim() || null,
-        customerId,
-      ]
+    const updateFields = [];
+    const updateValues = [];
+
+    if (fullName !== undefined) { updateFields.push('full_name = ?'); updateValues.push(fullName?.trim() || null); }
+    if (email !== undefined) { updateFields.push('email = ?'); updateValues.push(email?.trim() || null); }
+    if (address !== undefined) { updateFields.push('address = ?'); updateValues.push(address?.trim() || null); }
+    if (dateOfBirth !== undefined) { updateFields.push('date_of_birth = ?'); updateValues.push(dateOfBirth || null); }
+    if (street !== undefined) { updateFields.push('street = ?'); updateValues.push(street?.trim() || null); }
+    if (landmark !== undefined) { updateFields.push('landmark = ?'); updateValues.push(landmark?.trim() || null); }
+    if (city !== undefined) { updateFields.push('city = ?'); updateValues.push(city?.trim() || null); }
+    if (pincode !== undefined) { updateFields.push('pincode = ?'); updateValues.push(pincode?.trim() || null); }
+    if (aadharNumber !== undefined) { updateFields.push('aadhar_number = ?'); updateValues.push(aadharNumber?.trim() || null); }
+    if (panNumber !== undefined) { updateFields.push('pan_number = ?'); updateValues.push(panNumber?.trim() || null); }
+    if (nomineeName !== undefined) { updateFields.push('nominee_name = ?'); updateValues.push(nomineeName?.trim() || null); }
+    if (dreamLandSize !== undefined) { updateFields.push('dream_land_size = ?'); updateValues.push(dreamLandSize?.trim() || null); }
+    if (occupation !== undefined) { updateFields.push('occupation = ?'); updateValues.push(occupation?.trim() || null); }
+    if (profilePic !== undefined) { updateFields.push('profile_pic = ?'); updateValues.push(profilePic?.trim() || null); }
+    if (alternativePhone !== undefined) { updateFields.push('alternative_phone = ?'); updateValues.push(alternativePhone?.trim() || null); }
+    if (maritalStatus !== undefined) { updateFields.push('marital_status = ?'); updateValues.push(maritalStatus?.trim() || null); }
+    if (marriageDate !== undefined) { updateFields.push('marriage_date = ?'); updateValues.push(marriageDate || null); }
+
+    if (updateFields.length > 0) {
+      updateValues.push(customerId);
+      await pool.query(`UPDATE customers SET ${updateFields.join(', ')} WHERE id = ?`, updateValues);
+    }
+
+    const [freshRows] = await pool.query(
+      `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, 
+              aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic,
+              alternative_phone, marital_status, marriage_date
+       FROM customers WHERE id = ?`,
+      [customerId]
     );
+    const updated = freshRows[0];
 
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully!',
       customer: {
-        id: customerId,
-        fullName,
-        phoneNumber: last10,
-        email,
-        address,
-        dateOfBirth,
-        street,
-        landmark,
-        city,
-        pincode,
-        aadharNumber,
-        panNumber,
-        nomineeName,
-        dreamLandSize,
-        occupation,
-        profilePic,
+        id: updated.id,
+        fullName: updated.full_name,
+        phoneNumber: updated.phone_number,
+        email: updated.email || '',
+        address: updated.address || '',
+        dateOfBirth: updated.date_of_birth || '',
+        street: updated.street || '',
+        landmark: updated.landmark || '',
+        city: updated.city || '',
+        pincode: updated.pincode || '',
+        aadharNumber: updated.aadhar_number || '',
+        panNumber: updated.pan_number || '',
+        nomineeName: updated.nominee_name || '',
+        dreamLandSize: updated.dream_land_size || '',
+        occupation: updated.occupation || '',
+        profilePic: updated.profile_pic || '',
+        alternativePhone: updated.alternative_phone || '',
+        maritalStatus: updated.marital_status || '',
+        marriageDate: updated.marriage_date || '',
       },
     });
   } catch (err) {
@@ -1365,7 +1379,7 @@ async function getCustomerProfile(req, res, next) {
 
     if (cleanInput.includes('@')) {
       const [emailRows] = await pool.query(
-        `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic
+        `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic, alternative_phone, marital_status, marriage_date
          FROM customers WHERE LOWER(email) = LOWER(?) AND is_active = 1 LIMIT 1`,
         [cleanInput]
       );
@@ -1374,7 +1388,7 @@ async function getCustomerProfile(req, res, next) {
       const cleanPhone = cleanInput.replace(/[^0-9]/g, '');
       const last10 = cleanPhone.slice(-10);
       const [phoneRows] = await pool.query(
-        `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic
+        `SELECT id, full_name, phone_number, email, address, date_of_birth, street, landmark, city, pincode, aadhar_number, pan_number, nominee_name, dream_land_size, occupation, profile_pic, alternative_phone, marital_status, marriage_date
          FROM customers WHERE phone_number LIKE ? AND is_active = 1 LIMIT 1`,
         [`%${last10}`]
       );
@@ -1408,6 +1422,9 @@ async function getCustomerProfile(req, res, next) {
         dreamLandSize: customer.dream_land_size || '',
         occupation: customer.occupation || '',
         profilePic: customer.profile_pic || '',
+        alternativePhone: customer.alternative_phone || '',
+        maritalStatus: customer.marital_status || '',
+        marriageDate: customer.marriage_date || '',
       },
     });
   } catch (err) {
