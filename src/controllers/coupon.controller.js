@@ -167,12 +167,8 @@ async function logCouponToWorkReports(connOrPool, {
     const finalSource = isCustomerReferral
       ? 'Referral'
       : (referredBy && !referredBy.includes('Company Direct') ? 'Referral' : 'Walk-in');
-    const finalTaskDesc = isCustomerReferral
-      ? 'Coupon Entry (Customer Referral)'
-      : 'Coupon Entry';
-    const finalCallNotes = isCustomerReferral
-      ? `[Customer Referral Coupon: #${couponSummary} (${couponNumbers.length} ticket(s), ₹${totalAmount})]`
-      : `[Coupon Issued: #${couponSummary} (${couponNumbers.length} ticket(s), ₹${totalAmount})]`;
+    const finalTaskDesc = 'Coupon Entry';
+    const finalCallNotes = `Coupon #${couponSummary} (${couponNumbers.length} ticket${couponNumbers.length > 1 ? 's' : ''}, ₹${totalAmount})`;
     const finalRemarks = isCustomerReferral
       ? `Customer applied online with employee referral: ${referredBy || staffUser.full_name} (${paymentMode}, Trans: ${paymentTransId || 'UPI'})`
       : `Staff mobile coupon entry (${paymentMode}, Trans: ${paymentTransId || 'DIRECT_CASH'})`;
@@ -1342,6 +1338,15 @@ async function ensureLuckyDrawEventsTable() {
         WHERE (c.staff_id IS NULL OR c.staff_id = '' OR c.staff_id = 'ONLINE')
           AND c.referred_by IS NOT NULL 
           AND c.referred_by NOT LIKE '%Company Direct%'
+      `);
+    } catch (_) {}
+
+    // Clean up task_desc for coupon entries so they consistently show "Coupon Entry"
+    try {
+      await pool.query(`
+        UPDATE work_reports 
+        SET task_desc = 'Coupon Entry' 
+        WHERE task_desc LIKE '%Coupon%' OR call_notes LIKE '%Coupon%'
       `);
     } catch (_) {}
   } catch (err) {
