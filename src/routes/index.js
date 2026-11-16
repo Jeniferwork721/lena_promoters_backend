@@ -12,6 +12,16 @@ const layoutRoutes = require('./layout.routes');
 const authController = require('../controllers/auth.controller');
 const { verifyStaffToken } = require('../middlewares/auth.middleware');
 
+// Health check endpoint (Public, ultra-fast connection & uptime monitoring)
+router.get('/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Lena Promoters API is running smoothly',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+  });
+});
+
 // Root level change-password endpoint (resolves /api/v1/change-password directly)
 router.post('/change-password', (req, res, next) => {
   if (req.headers.authorization) {
@@ -32,15 +42,5 @@ router.use('/branches', branchRoutes);
 // Mount CRM routes both at root and /crm namespace for full compatibility
 router.use('/', crmRoutes);
 router.use('/crm', crmRoutes);
-
-// Health check endpoint
-router.get('/health', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'Lena Promoters API is running smoothly',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0',
-  });
-});
 
 module.exports = router;

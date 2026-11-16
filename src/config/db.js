@@ -341,7 +341,7 @@ async function initializeDatabase() {
         { name: 'profile_pic', type: 'TEXT NULL' },
         { name: 'alternative_phone', type: 'VARCHAR(25) NULL' },
         { name: 'marital_status', type: 'VARCHAR(20) NULL' },
-        { name: 'marriage_date', type: 'DATE NULL' },
+        { name: 'marriage_date', type: 'VARCHAR(50) NULL' },
       ];
       for (const col of extendedCols) {
         const [exists] = await connection.query(`SHOW COLUMNS FROM \`customers\` LIKE "${col.name}"`);
@@ -349,6 +349,11 @@ async function initializeDatabase() {
           await connection.query(`ALTER TABLE \`customers\` ADD COLUMN \`${col.name}\` ${col.type}`);
         }
       }
+
+      // Safely ensure marriage_date supports optional time (HH:MM)
+      try {
+        await connection.query('ALTER TABLE `customers` MODIFY COLUMN `marriage_date` VARCHAR(50) NULL');
+      } catch (_) {}
 
       // Enforce unique constraints on customer phone & email
       try {
