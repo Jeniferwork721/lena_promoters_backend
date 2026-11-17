@@ -578,7 +578,7 @@ async function updateEmployee(req, res, next) {
         UPDATE staff_users 
         SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?
         WHERE id = ?
-      `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, finalTeamId, cleanBranch, employeeId]);
+      `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, employeeId]);
     } catch (_) {
       await pool.query(`
         UPDATE staff_users 
