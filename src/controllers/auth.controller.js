@@ -1,3 +1,13 @@
+
+function parseJsonSafe(val, defaultVal = null) {
+  if (!val) return defaultVal;
+  if (typeof val === 'object') return val;
+  try {
+    return JSON.parse(val);
+  } catch (e) {
+    return defaultVal;
+  }
+}
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../config/db');
@@ -176,6 +186,27 @@ async function loginWithPassword(req, res, next) {
         teamId: staff.team_id || null,
         teamName,
         mustChangePassword: Boolean(staff.must_change_password),
+        isProfileCompleted: Boolean(staff.is_profile_completed),
+        isVerifiedEmployee: Boolean(staff.is_verified_employee),
+        profileCompleted: Boolean(staff.is_profile_completed),
+        verifiedEmployee: Boolean(staff.is_verified_employee),
+        dob: staff.dob,
+        personalPhone: staff.personal_phone,
+        aadharNo: staff.aadhar_no,
+        panNo: staff.pan_no,
+        bankName: staff.bank_name,
+        accountNo: staff.account_no,
+        bankBranch: staff.bank_branch,
+        ifscCode: staff.ifsc_code,
+        profilePic: staff.profile_pic,
+        address: staff.address,
+        maritalStatus: staff.marital_status,
+        marriageDate: staff.marriage_date,
+        parents: parseJsonSafe(staff.parents, []),
+        siblings: parseJsonSafe(staff.siblings, []),
+        children: parseJsonSafe(staff.children, []),
+        spouse: parseJsonSafe(staff.spouse, {}),
+        workExperience: parseJsonSafe(staff.work_experience, []),
       },
       user: {
         id: staff.employee_id ? String(staff.employee_id) : (staff.id ? `emp_${staff.id}` : ''),
@@ -770,9 +801,9 @@ async function resetPassword(req, res, next) {
  */
 async function getProfile(req, res, next) {
   try {
-    const staffId = req.staff.id;
+    const staffId = req.staff?.id;
     const [rows] = await pool.query(
-      'SELECT id, employee_id, full_name, email, phone_number, branch_location, role, created_at FROM staff_users WHERE id = ?',
+      'SELECT * FROM staff_users WHERE id = ? LIMIT 1',
       [staffId]
     );
 
@@ -783,9 +814,41 @@ async function getProfile(req, res, next) {
       });
     }
 
+    const staff = rows[0];
     return res.status(200).json({
       success: true,
-      staff: rows[0],
+      staff: {
+        id: staff.id,
+        employeeId: staff.employee_id,
+        fullName: staff.full_name,
+        name: staff.full_name,
+        email: staff.email,
+        phone: staff.phone_number,
+        branch: staff.branch_location,
+        role: staff.role,
+        isProfileCompleted: Boolean(staff.is_profile_completed),
+        isVerifiedEmployee: Boolean(staff.is_verified_employee),
+        profileCompleted: Boolean(staff.is_profile_completed),
+        verifiedEmployee: Boolean(staff.is_verified_employee),
+        dob: staff.dob,
+        personalPhone: staff.personal_phone,
+        aadharNo: staff.aadhar_no,
+        panNo: staff.pan_no,
+        bankName: staff.bank_name,
+        accountNo: staff.account_no,
+        bankBranch: staff.bank_branch,
+        ifscCode: staff.ifsc_code,
+        profilePic: staff.profile_pic,
+        address: staff.address,
+        maritalStatus: staff.marital_status,
+        marriageDate: staff.marriage_date,
+        parents: parseJsonSafe(staff.parents, []),
+        siblings: parseJsonSafe(staff.siblings, []),
+        children: parseJsonSafe(staff.children, []),
+        spouse: parseJsonSafe(staff.spouse, {}),
+        workExperience: parseJsonSafe(staff.work_experience, []),
+        createdAt: staff.created_at,
+      },
     });
   } catch (err) {
     next(err);
@@ -1450,7 +1513,49 @@ async function getCustomerProfile(req, res, next) {
  */
 async function updateStaffProfile(req, res, next) {
   try {
-    const { employeeId, id, fullName, email, phone, branch, branchLocation, role } = req.body;
+    const {
+      employeeId,
+      id,
+      fullName,
+      email,
+      phone,
+      branch,
+      branchLocation,
+      role,
+      dob,
+      personalPhone,
+      personal_phone,
+      aadharNo,
+      aadhar_no,
+      panNo,
+      pan_no,
+      bankName,
+      bank_name,
+      accountNo,
+      account_no,
+      bankBranch,
+      bank_branch,
+      ifscCode,
+      ifsc_code,
+      profilePic,
+      profile_pic,
+      address,
+      maritalStatus,
+      marital_status,
+      marriageDate,
+      marriage_date,
+      parents,
+      siblings,
+      children,
+      spouse,
+      workExperience,
+      work_experience,
+      isProfileCompleted,
+      is_profile_completed,
+      isVerifiedEmployee,
+      is_verified_employee,
+    } = req.body;
+
     const staffLookupId = id || req.staff?.id;
     const staffLookupEmpId = employeeId || req.staff?.employeeId;
 
@@ -1492,18 +1597,102 @@ async function updateStaffProfile(req, res, next) {
       }
     }
 
-    const finalName = fullName ? fullName.trim() : currentStaff.full_name;
+    // Name is set by Admin and read-only for employee unless explicitly updating as admin or initial set
+    const finalName = fullName && fullName.trim().isNotEmpty ? fullName.trim() : currentStaff.full_name;
     const finalBranch = (branchLocation || branch || '').trim() || currentStaff.branch_location;
     const finalRole = role ? role.trim().toUpperCase() : currentStaff.role;
+
+    // Profile Details
+    const finalDob = dob !== undefined ? dob : currentStaff.dob;
+    const finalPersonalPhone = (personalPhone || personal_phone || '').trim() || currentStaff.personal_phone;
+    const finalAadhar = (aadharNo || aadhar_no || '').trim() || currentStaff.aadhar_no;
+    const finalPan = (panNo || pan_no || '').trim().toUpperCase() || currentStaff.pan_no;
+    const finalBankName = (bankName || bank_name || '').trim() || currentStaff.bank_name;
+    const finalAccountNo = (accountNo || account_no || '').trim() || currentStaff.account_no;
+    const finalBankBranch = (bankBranch || bank_branch || '').trim() || currentStaff.bank_branch;
+    const finalIfsc = (ifscCode || ifsc_code || '').trim().toUpperCase() || currentStaff.ifsc_code;
+    const finalProfilePic = (profilePic || profile_pic || '').trim() || currentStaff.profile_pic;
+    const finalAddress = (address || '').trim() || currentStaff.address;
+    const finalMaritalStatus = (maritalStatus || marital_status || '').trim() || currentStaff.marital_status;
+    const finalMarriageDate = marriageDate || marriage_date || currentStaff.marriage_date || null;
+
+    // Complex / JSON fields
+    const finalParents = parents !== undefined ? JSON.stringify(parents) : (typeof currentStaff.parents === 'string' ? currentStaff.parents : JSON.stringify(currentStaff.parents || []));
+    const finalSiblings = siblings !== undefined ? JSON.stringify(siblings) : (typeof currentStaff.siblings === 'string' ? currentStaff.siblings : JSON.stringify(currentStaff.siblings || []));
+    const finalChildren = children !== undefined ? JSON.stringify(children) : (typeof currentStaff.children === 'string' ? currentStaff.children : JSON.stringify(currentStaff.children || []));
+    const finalSpouse = spouse !== undefined ? JSON.stringify(spouse) : (typeof currentStaff.spouse === 'string' ? currentStaff.spouse : JSON.stringify(currentStaff.spouse || {}));
+    const finalWorkExp = (workExperience || work_experience) !== undefined ? JSON.stringify(workExperience || work_experience) : (typeof currentStaff.work_experience === 'string' ? currentStaff.work_experience : JSON.stringify(currentStaff.work_experience || []));
+
+    // Mandatory completion calculation
+    const hasMandatory = Boolean(
+      (finalName && finalName.length > 0) &&
+      finalDob &&
+      (finalPersonalPhone && finalPersonalPhone.length >= 10) &&
+      (finalAadhar && finalAadhar.length >= 12) &&
+      (finalPan && finalPan.length >= 10) &&
+      finalBankName &&
+      finalAccountNo &&
+      finalBankBranch &&
+      finalIfsc &&
+      finalProfilePic &&
+      finalAddress
+    );
+
+    const markCompleted = isProfileCompleted === true || is_profile_completed === true || isProfileCompleted === 1 || hasMandatory;
+    const markVerified = isVerifiedEmployee === true || is_verified_employee === true || isVerifiedEmployee === 1 || markCompleted;
 
     await pool.query(
       `UPDATE staff_users SET
          full_name = ?,
          email = ?,
          branch_location = ?,
-         role = ?
+         role = ?,
+         dob = ?,
+         personal_phone = ?,
+         aadhar_no = ?,
+         pan_no = ?,
+         bank_name = ?,
+         account_no = ?,
+         bank_branch = ?,
+         ifsc_code = ?,
+         profile_pic = ?,
+         address = ?,
+         marital_status = ?,
+         marriage_date = ?,
+         parents = ?,
+         siblings = ?,
+         children = ?,
+         spouse = ?,
+         work_experience = ?,
+         is_profile_completed = ?,
+         is_verified_employee = ?
        WHERE id = ?`,
-      [finalName, newEmail, finalBranch, finalRole, currentStaff.id]
+      [
+        finalName,
+        newEmail,
+        finalBranch,
+        finalRole,
+        finalDob || null,
+        finalPersonalPhone || null,
+        finalAadhar || null,
+        finalPan || null,
+        finalBankName || null,
+        finalAccountNo || null,
+        finalBankBranch || null,
+        finalIfsc || null,
+        finalProfilePic || null,
+        finalAddress || null,
+        finalMaritalStatus || null,
+        finalMarriageDate || null,
+        finalParents,
+        finalSiblings,
+        finalChildren,
+        finalSpouse,
+        finalWorkExp,
+        markCompleted ? 1 : 0,
+        markVerified ? 1 : 0,
+        currentStaff.id,
+      ]
     );
 
     const [updatedRows] = await pool.query('SELECT * FROM staff_users WHERE id = ?', [currentStaff.id]);
@@ -1511,15 +1700,39 @@ async function updateStaffProfile(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      message: 'Staff profile updated successfully!',
+      message: markCompleted
+        ? 'Staff profile completed and verified successfully!'
+        : 'Staff profile updated successfully!',
       staff: {
         id: updated.id,
         employeeId: updated.employee_id,
         fullName: updated.full_name,
+        name: updated.full_name,
         email: updated.email,
         phone: updated.phone_number,
         branch: updated.branch_location,
         role: updated.role,
+        isProfileCompleted: Boolean(updated.is_profile_completed),
+        isVerifiedEmployee: Boolean(updated.is_verified_employee),
+        profileCompleted: Boolean(updated.is_profile_completed),
+        verifiedEmployee: Boolean(updated.is_verified_employee),
+        dob: updated.dob,
+        personalPhone: updated.personal_phone,
+        aadharNo: updated.aadhar_no,
+        panNo: updated.pan_no,
+        bankName: updated.bank_name,
+        accountNo: updated.account_no,
+        bankBranch: updated.bank_branch,
+        ifscCode: updated.ifsc_code,
+        profilePic: updated.profile_pic,
+        address: updated.address,
+        maritalStatus: updated.marital_status,
+        marriageDate: updated.marriage_date,
+        parents: parseJsonSafe(updated.parents, []),
+        siblings: parseJsonSafe(updated.siblings, []),
+        children: parseJsonSafe(updated.children, []),
+        spouse: parseJsonSafe(updated.spouse, {}),
+        workExperience: parseJsonSafe(updated.work_experience, []),
       },
     });
   } catch (err) {
@@ -1539,8 +1752,7 @@ async function getMe(req, res, next) {
     }
 
     const [rows] = await pool.query(
-      `SELECT s.id, s.employee_id, s.full_name, s.email, s.phone_number, s.branch_location,
-              s.role, s.team_id, s.must_change_password, t.name as team_name
+      `SELECT s.*, t.name as team_name
        FROM staff_users s
        LEFT JOIN teams t ON s.team_id = t.id
        WHERE s.id = ? AND s.is_active = 1 LIMIT 1`,
@@ -1570,6 +1782,27 @@ async function getMe(req, res, next) {
         teamId: staff.team_id || null,
         teamName: staff.team_name || null,
         mustChangePassword: Boolean(staff.must_change_password),
+        isProfileCompleted: Boolean(staff.is_profile_completed),
+        isVerifiedEmployee: Boolean(staff.is_verified_employee),
+        profileCompleted: Boolean(staff.is_profile_completed),
+        verifiedEmployee: Boolean(staff.is_verified_employee),
+        dob: staff.dob,
+        personalPhone: staff.personal_phone,
+        aadharNo: staff.aadhar_no,
+        panNo: staff.pan_no,
+        bankName: staff.bank_name,
+        accountNo: staff.account_no,
+        bankBranch: staff.bank_branch,
+        ifscCode: staff.ifsc_code,
+        profilePic: staff.profile_pic,
+        address: staff.address,
+        maritalStatus: staff.marital_status,
+        marriageDate: staff.marriage_date,
+        parents: parseJsonSafe(staff.parents, []),
+        siblings: parseJsonSafe(staff.siblings, []),
+        children: parseJsonSafe(staff.children, []),
+        spouse: parseJsonSafe(staff.spouse, {}),
+        workExperience: parseJsonSafe(staff.work_experience, []),
       },
     });
   } catch (err) {

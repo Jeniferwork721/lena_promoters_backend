@@ -6,6 +6,7 @@ const { verifyStaffToken } = require('../middlewares/auth.middleware');
 
 // Upload receipt (Accessible to both customers and staff for payment proof)
 router.post('/receipt', upload.any(), uploadController.uploadReceipt);
+router.post('/profile-photo', upload.any(), uploadController.uploadReceipt);
 
 // Upload property image, site photo, or layout plan (PDF/image) (requires staff authentication)
 router.post('/property-media', verifyStaffToken, upload.any(), uploadController.uploadPropertyMedia);

@@ -800,6 +800,36 @@ async function initializeDatabase() {
       if (desigCol.length === 0) {
         await connection.query("ALTER TABLE `staff_users` ADD COLUMN `designation` VARCHAR(150) NULL AFTER `role`");
       }
+
+      // 11b. Staff Mandatory & Optional Profile Setup Columns
+      const staffProfileCols = [
+        { name: 'dob', type: 'DATE NULL' },
+        { name: 'personal_phone', type: 'VARCHAR(25) NULL' },
+        { name: 'aadhar_no', type: 'VARCHAR(25) NULL' },
+        { name: 'pan_no', type: 'VARCHAR(25) NULL' },
+        { name: 'bank_name', type: 'VARCHAR(150) NULL' },
+        { name: 'account_no', type: 'VARCHAR(50) NULL' },
+        { name: 'bank_branch', type: 'VARCHAR(150) NULL' },
+        { name: 'ifsc_code', type: 'VARCHAR(25) NULL' },
+        { name: 'profile_pic', type: 'TEXT NULL' },
+        { name: 'address', type: 'TEXT NULL' },
+        { name: 'marital_status', type: 'VARCHAR(50) NULL' },
+        { name: 'marriage_date', type: 'DATE NULL' },
+        { name: 'parents', type: 'JSON NULL' },
+        { name: 'siblings', type: 'JSON NULL' },
+        { name: 'children', type: 'JSON NULL' },
+        { name: 'spouse', type: 'JSON NULL' },
+        { name: 'work_experience', type: 'JSON NULL' },
+        { name: 'is_profile_completed', type: 'TINYINT(1) NOT NULL DEFAULT 0' },
+        { name: 'is_verified_employee', type: 'TINYINT(1) NOT NULL DEFAULT 0' },
+      ];
+
+      for (const col of staffProfileCols) {
+        const [c] = await connection.query(`SHOW COLUMNS FROM \`staff_users\` LIKE '${col.name}'`);
+        if (c.length === 0) {
+          await connection.query(`ALTER TABLE \`staff_users\` ADD COLUMN \`${col.name}\` ${col.type}`);
+        }
+      }
     } catch (e) {
       console.warn('Notice updating staff_users columns:', e.message);
     }
