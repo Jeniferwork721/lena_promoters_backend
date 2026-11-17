@@ -274,6 +274,7 @@ async function initializeDatabase() {
         \`full_name\` VARCHAR(150) NOT NULL,
         \`phone_number\` VARCHAR(25) NOT NULL UNIQUE,
         \`email\` VARCHAR(150) NULL,
+        \`password_hash\` VARCHAR(255) NULL,
         \`address\` TEXT NULL,
         \`referred_by\` VARCHAR(150) NULL,
         \`date_of_birth\` DATE NULL,
@@ -342,6 +343,7 @@ async function initializeDatabase() {
         { name: 'alternative_phone', type: 'VARCHAR(25) NULL' },
         { name: 'marital_status', type: 'VARCHAR(20) NULL' },
         { name: 'marriage_date', type: 'VARCHAR(50) NULL' },
+        { name: 'password_hash', type: 'VARCHAR(255) NULL' },
       ];
       for (const col of extendedCols) {
         const [exists] = await connection.query(`SHOW COLUMNS FROM \`customers\` LIKE "${col.name}"`);

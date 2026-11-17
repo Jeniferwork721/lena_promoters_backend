@@ -28,6 +28,10 @@ router.get('/branches', branchController.getBranches);
 // Public routes for customer login & registration (No password setup required)
 router.post('/customer/send-otp', authController.sendCustomerOtp);
 router.post('/customer/login-otp', authController.loginCustomerWithOtp);
+router.post('/customer/login-password', authController.loginCustomerWithPassword);
+router.post('/customer/forgot-password', authController.sendCustomerResetOtp);
+router.post('/customer/reset-password', authController.resetCustomerPassword);
+router.post('/customer/change-password', authController.changeCustomerPassword);
 router.post('/customer/register', authController.registerCustomer);
 router.get('/customer/profile', authController.getCustomerProfile);
 router.put('/customer/profile', authController.updateCustomerProfile);
