@@ -78,6 +78,7 @@ router.get('/performance/teams', requireMD, crmDashboard.getTeamPerformance);
 router.get('/config/options', crmConfig.getConfigOptions);
 router.get('/config/options/:list', crmConfig.getConfigOptionList);
 router.put('/config/options/:list', requireMD, crmConfig.updateConfigOptionList);
+router.post('/config/options/add-item', crmConfig.addConfigOptionItem);
 
 // ==========================================================
 // 10. ADMIN RESET EARLY DATA

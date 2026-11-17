@@ -186,6 +186,8 @@ async function loginWithPassword(req, res, next) {
         teamId: staff.team_id || null,
         teamName,
         mustChangePassword: Boolean(staff.must_change_password),
+        department: staff.department || null,
+        designation: staff.designation || null,
         isProfileCompleted: Boolean(staff.is_profile_completed),
         isVerifiedEmployee: Boolean(staff.is_verified_employee),
         profileCompleted: Boolean(staff.is_profile_completed),
@@ -363,8 +365,8 @@ async function loginWithOtp(req, res, next) {
       const defaultHash = await bcrypt.hash('LenaStaff@2026', 10);
 
       const [insertResult] = await pool.query(
-        `INSERT INTO staff_users (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO staff_users (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, department, designation)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           employeeId,
           'Lena Staff Member',
@@ -424,10 +426,14 @@ async function registerEmployee(req, res, next) {
       branch,
       branchLocation,
       role: reqRole,
+      department: reqDept,
+      designation: reqDesig,
     } = req.body;
     const finalName = (reqFullName || name || '').trim() || 'Authorized Lena Staff';
     const selectedBranch = (branchLocation || branch || '').trim() || 'Karaikudi – Head Office';
     const finalRole = (reqRole || 'STAFF').trim().toUpperCase();
+    const finalDept = (reqDept || '').trim();
+    const finalDesig = (reqDesig || '').trim();
 
     const cleanInput = (emailOrPhone || phone || phoneNumber || email || '').trim();
     const cleanPassword = (newPassword || reqPassword || '').trim();
@@ -1522,6 +1528,8 @@ async function updateStaffProfile(req, res, next) {
       branch,
       branchLocation,
       role,
+      department,
+      designation,
       dob,
       personalPhone,
       personal_phone,
@@ -1601,6 +1609,8 @@ async function updateStaffProfile(req, res, next) {
     const finalName = fullName && fullName.trim().isNotEmpty ? fullName.trim() : currentStaff.full_name;
     const finalBranch = (branchLocation || branch || '').trim() || currentStaff.branch_location;
     const finalRole = role ? role.trim().toUpperCase() : currentStaff.role;
+    const finalDepartment = department !== undefined ? (department || '').trim() : currentStaff.department;
+    const finalDesignation = designation !== undefined ? (designation || '').trim() : currentStaff.designation;
 
     // Profile Details
     const finalDob = dob !== undefined ? dob : currentStaff.dob;
@@ -1647,6 +1657,8 @@ async function updateStaffProfile(req, res, next) {
          email = ?,
          branch_location = ?,
          role = ?,
+         department = ?,
+         designation = ?,
          dob = ?,
          personal_phone = ?,
          aadhar_no = ?,
@@ -1672,6 +1684,8 @@ async function updateStaffProfile(req, res, next) {
         newEmail,
         finalBranch,
         finalRole,
+        finalDepartment || null,
+        finalDesignation || null,
         finalDob || null,
         finalPersonalPhone || null,
         finalAadhar || null,
@@ -1712,6 +1726,8 @@ async function updateStaffProfile(req, res, next) {
         phone: updated.phone_number,
         branch: updated.branch_location,
         role: updated.role,
+        department: updated.department || null,
+        designation: updated.designation || null,
         isProfileCompleted: Boolean(updated.is_profile_completed),
         isVerifiedEmployee: Boolean(updated.is_verified_employee),
         profileCompleted: Boolean(updated.is_profile_completed),

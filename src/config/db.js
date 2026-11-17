@@ -796,6 +796,11 @@ async function initializeDatabase() {
       if (createdByCol.length === 0) {
         await connection.query("ALTER TABLE `staff_users` ADD COLUMN `created_by` INT NULL AFTER `must_change_password`");
       }
+      const [deptCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'department'");
+      if (deptCol.length === 0) {
+        await connection.query("ALTER TABLE `staff_users` ADD COLUMN `department` VARCHAR(100) NULL AFTER `role`");
+      }
+
       const [desigCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'designation'");
       if (desigCol.length === 0) {
         await connection.query("ALTER TABLE `staff_users` ADD COLUMN `designation` VARCHAR(150) NULL AFTER `role`");

@@ -102,6 +102,58 @@ async function updateConfigOptionList(req, res, next) {
 }
 
 /**
+ * 40b. POST /config/options/add-item (Admin & Manager)
+ * Dynamically appends a new option (e.g. new department or new designation) if not already present.
+ * Body: { list: "departments", value: "New Dept Name" }
+ */
+async function addConfigOptionItem(req, res, next) {
+  try {
+    const { list, value } = req.body;
+    if (!list || !value || !String(value).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both "list" name and "value" string are required.',
+      });
+    }
+
+    const cleanList = String(list).trim();
+    const cleanValue = String(value).trim();
+
+    const [rows] = await pool.query('SELECT list_values FROM config_options WHERE list_name = ? LIMIT 1', [cleanList]);
+
+    let values = DEFAULT_CRM_OPTIONS[cleanList] ? [...DEFAULT_CRM_OPTIONS[cleanList]] : [];
+    if (rows.length > 0) {
+      try {
+        const parsed = typeof rows[0].list_values === 'string' ? JSON.parse(rows[0].list_values) : rows[0].list_values;
+        if (Array.isArray(parsed)) values = parsed;
+      } catch (_) {}
+    }
+
+    if (!values.some(v => v.toLowerCase() === cleanValue.toLowerCase())) {
+      values.push(cleanValue);
+      await pool.query(
+        `INSERT INTO config_options (list_name, list_values)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE list_values = VALUES(list_values)`,
+        [cleanList, JSON.stringify(values)]
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Option "${cleanValue}" added to "${cleanList}" successfully.`,
+      data: {
+        list: cleanList,
+        values,
+      },
+      values,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * 41. POST /crm/admin/reset-early-data (MD only)
  * Safely removes early test employees, coupons, customers, leads, tasks, and reports
  * while keeping the main Admin account (LP-COMPANY / ADMIN) intact.
@@ -152,5 +204,6 @@ module.exports = {
   getConfigOptions,
   getConfigOptionList,
   updateConfigOptionList,
+  addConfigOptionItem,
   resetEarlyTestData,
 };
