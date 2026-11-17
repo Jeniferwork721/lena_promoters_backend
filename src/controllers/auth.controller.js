@@ -1587,13 +1587,28 @@ async function changePassword(req, res, next) {
     let staffId = req.staff?.id;
     const { currentPassword, newPassword, email, phone, emailOrPhone, employeeId } = req.body;
 
-    if (!newPassword || newPassword.trim().length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: 'New password must be at least 6 characters long.',
-        errors: { newPassword: 'Minimum 6 characters required' },
-      });
-    }
+    const trimmedNew = (newPassword || '').trim();
+    const hasMinLen = trimmedNew.length >= 8;
+    const hasUpper = /[A-Z]/.test(trimmedNew);
+    const hasLower = /[a-z]/.test(trimmedNew);
+    const hasNumber = /[0-9]/.test(trimmedNew);
+    const hasSpecial = /[!@#$%^&*(),.?:{}|<>\-_=+\\[\]~]/.test(trimmedNew);
+
+ if (!hasMinLen || !hasUpper || !hasLower || !hasNumber || !hasSpecial) {
+ return res.status(400).json({
+ success: false,
+ message: 'Password must be at least 8 characters long and contain uppercase letters, lowercase letters, numbers, and special characters.',
+ errors: { newPassword: 'Strong password required (A-Z, a-z, 0-9, special character, min 8 chars)' },
+ });
+ }
+
+ if (trimmedNew === 'Lena@1234') {
+ return res.status(400).json({
+ success: false,
+ message: 'Please choose a personal password different from the temporary default password.',
+ errors: { newPassword: 'Cannot use default temporary password' },
+ });
+ }
 
     let staff = null;
     if (staffId) {
