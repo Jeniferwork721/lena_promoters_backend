@@ -972,6 +972,31 @@ async function initializeDatabase() {
     }
     console.log('📋 Synced CRM reference data dropdown options to DB');
 
+    // 16. Staff Phone Call Logs Table (Synced from Lena Staff mobile app -> used in CRM Call Entry)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`staff_call_logs\` (
+        \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
+        \`staff_id\` INT NOT NULL,
+        \`employee_id\` VARCHAR(50) NULL,
+        \`staff_name\` VARCHAR(150) NULL,
+        \`branch_location\` VARCHAR(150) NULL,
+        \`phone_number\` VARCHAR(30) NOT NULL,
+        \`contact_name\` VARCHAR(150) NULL,
+        \`call_type\` VARCHAR(20) NOT NULL DEFAULT 'UNKNOWN',
+        \`duration_seconds\` INT NOT NULL DEFAULT 0,
+        \`call_timestamp\` DATETIME NOT NULL,
+        \`device_call_key\` VARCHAR(160) NOT NULL,
+        \`is_added_to_entry\` TINYINT(1) NOT NULL DEFAULT 0,
+        \`crm_report_id\` VARCHAR(64) NULL,
+        \`synced_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY \`uq_staff_device_call\` (\`staff_id\`, \`device_call_key\`),
+        INDEX \`idx_call_staff_time\` (\`staff_id\`, \`call_timestamp\`),
+        INDEX \`idx_call_phone_time\` (\`phone_number\`, \`call_timestamp\`),
+        INDEX \`idx_call_type_time\` (\`call_type\`, \`call_timestamp\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    console.log('📞 Verified staff_call_logs table in DB');
+
     // Note: Mock coupon seeding disabled to retain only real applicant and verified coupon entries.
 
   } catch (err) {

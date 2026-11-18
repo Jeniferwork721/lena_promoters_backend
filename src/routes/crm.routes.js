@@ -10,6 +10,7 @@ const crmTask = require('../controllers/crmTask.controller');
 const crmReport = require('../controllers/crmReport.controller');
 const crmDashboard = require('../controllers/crmDashboard.controller');
 const crmConfig = require('../controllers/crmConfig.controller');
+const crmCallLog = require('../controllers/crmCallLog.controller');
 
 // All CRM endpoints require staff token authentication
 router.use(verifyStaffToken);
@@ -84,5 +85,12 @@ router.post('/config/options/add-item', crmConfig.addConfigOptionItem);
 // 10. ADMIN RESET EARLY DATA
 // ==========================================================
 router.post('/admin/reset-early-data', requireMD, crmConfig.resetEarlyTestData);
+
+// ==========================================================
+// 11. STAFF PHONE CALL LOGS (Mobile Sync -> CRM Call Entry)
+// ==========================================================
+router.post('/call-logs/sync', crmCallLog.syncCallLogs);
+router.get('/call-logs', crmCallLog.getCallLogs);
+router.patch('/call-logs/:id/mark-logged', crmCallLog.markCallLogLogged);
 
 module.exports = router;
