@@ -27,6 +27,12 @@ async function ensureCallLogsTable() {
         INDEX \`idx_call_type_time\` (\`call_type\`, \`call_timestamp\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+    try {
+      const [col] = await pool.query("SHOW COLUMNS FROM `staff_users` LIKE 'call_log_tracking_since'");
+      if (col.length === 0) {
+        await pool.query('ALTER TABLE `staff_users` ADD COLUMN `call_log_tracking_since` DATETIME NULL');
+      }
+    } catch (_) {}
     tableEnsured = true;
   } catch (err) {
     console.error('ensureCallLogsTable warning:', err.message);
@@ -46,26 +52,124 @@ function normalizeCallType(raw) {
   return 'UNKNOWN';
 }
 
-function toMySqlDateTime(input) {
-  let d;
-  if (typeof input === 'number') {
-    d = new Date(input);
-  } else if (typeof input === 'string' && /^\d+$/.test(input.trim())) {
-    d = new Date(parseInt(input.trim(), 10));
-  } else if (input) {
-    d = new Date(input);
-  } else {
-    d = new Date();
+function toEpochMs(input) {
+  if (typeof input === 'number' && Number.isFinite(input)) return input;
+  if (typeof input === 'string' && /^\d+$/.test(input.trim())) {
+    return parseInt(input.trim(), 10);
   }
-  if (Number.isNaN(d.getTime())) d = new Date();
+  if (input instanceof Date && !Number.isNaN(input.getTime())) {
+    return input.getTime();
+  }
+  if (input) {
+    const str = String(input).trim();
+    // Handle MySQL 'YYYY-MM-DD HH:mm:ss' stored in UTC
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(str)) {
+      const parsed = Date.parse(str.replace(' ', 'T') + 'Z');
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    const parsed = Date.parse(str);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
 
+function toMySqlDateTime(input) {
+  const ms = toEpochMs(input);
+  const d = new Date(ms);
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
 
 /**
+ * GET /call-logs/tracking-status (Authenticated Staff)
+ * Returns the staff member's upcoming-only tracking anchor timestamp.
+ */
+async function getTrackingStatus(req, res, next) {
+  try {
+    await ensureCallLogsTable();
+    const staffId = req.staff?.id;
+    if (!staffId) {
+      return res.status(401).json({ success: false, message: 'Staff authentication required.' });
+    }
+
+    const [rows] = await pool.query(
+      'SELECT call_log_tracking_since as trackingSince FROM staff_users WHERE id = ? LIMIT 1',
+      [staffId]
+    );
+    const raw = rows[0]?.trackingSince || null;
+    const ms = raw ? toEpochMs(raw) : null;
+
+    return res.status(200).json({
+      success: true,
+      trackingSince: ms,
+      trackingSinceIso: ms ? new Date(ms).toISOString() : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /call-logs/enable-tracking (Authenticated Staff)
+ * Anchors upcoming-only call log tracking from NOW() when employee grants permission.
+ * Automatically removes any older pre-tracking call logs for this employee.
+ */
+async function enableTracking(req, res, next) {
+  try {
+    await ensureCallLogsTable();
+    const staffId = req.staff?.id;
+    if (!staffId) {
+      return res.status(401).json({ success: false, message: 'Staff authentication required.' });
+    }
+
+    const forceReset = Boolean(req.body?.forceReset);
+
+    const [rows] = await pool.query(
+      'SELECT call_log_tracking_since as trackingSince FROM staff_users WHERE id = ? LIMIT 1',
+      [staffId]
+    );
+    const existingRaw = rows[0]?.trackingSince || null;
+
+    if (existingRaw && !forceReset) {
+      const existingMs = toEpochMs(existingRaw);
+      return res.status(200).json({
+        success: true,
+        newlyEnabled: false,
+        trackingSince: existingMs,
+        trackingSinceIso: new Date(existingMs).toISOString(),
+        message: 'Upcoming-only call log tracking is already active.',
+      });
+    }
+
+    const nowMs = Date.now();
+    const nowSql = toMySqlDateTime(nowMs);
+
+    await pool.query(
+      'UPDATE staff_users SET call_log_tracking_since = ? WHERE id = ?',
+      [nowSql, staffId]
+    );
+
+    // Clean out any old pre-tracking logs for this employee so only upcoming calls are kept
+    await pool.query(
+      'DELETE FROM staff_call_logs WHERE staff_id = ? AND call_timestamp < ?',
+      [staffId, nowSql]
+    );
+
+    return res.status(200).json({
+      success: true,
+      newlyEnabled: true,
+      trackingSince: nowMs,
+      trackingSinceIso: new Date(nowMs).toISOString(),
+      message: 'Call log tracking enabled. Only upcoming calls from now will be stored.',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * POST /call-logs/sync (Authenticated Staff)
- * Body: { logs: [{ phoneNumber, contactName, callType, durationSeconds, callTimestamp, deviceCallKey }] }
+ * Strictly stores ONLY upcoming calls with callTimestamp >= call_log_tracking_since.
  */
 async function syncCallLogs(req, res, next) {
   try {
@@ -77,18 +181,10 @@ async function syncCallLogs(req, res, next) {
     }
 
     const incomingLogs = Array.isArray(req.body?.logs) ? req.body.logs : [];
-    if (incomingLogs.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: 'No call logs to sync.',
-        syncedCount: 0,
-        totalReceived: 0,
-      });
-    }
 
-    // Fetch latest staff details from staff_users
+    // Fetch latest staff details + call_log_tracking_since anchor
     const [staffRows] = await pool.query(
-      'SELECT id, employee_id, full_name, branch_location FROM staff_users WHERE id = ? LIMIT 1',
+      'SELECT id, employee_id, full_name, branch_location, call_log_tracking_since FROM staff_users WHERE id = ? LIMIT 1',
       [staffId]
     );
     const staffInfo = staffRows[0] || {
@@ -96,22 +192,69 @@ async function syncCallLogs(req, res, next) {
       employee_id: req.staff.employeeId || null,
       full_name: req.staff.fullName || req.staff.name || 'Staff',
       branch_location: req.staff.branch || '',
+      call_log_tracking_since: null,
     };
 
-    // Cap batch size at 500 per sync request
+    // If tracking anchor was never set yet, initialize it to NOW() and purge old pre-tracking logs
+    let trackingSinceMs;
+    if (!staffInfo.call_log_tracking_since) {
+      trackingSinceMs = Date.now();
+      const nowSql = toMySqlDateTime(trackingSinceMs);
+      await pool.query(
+        'UPDATE staff_users SET call_log_tracking_since = ? WHERE id = ?',
+        [nowSql, staffId]
+      );
+      await pool.query(
+        'DELETE FROM staff_call_logs WHERE staff_id = ? AND call_timestamp < ?',
+        [staffId, nowSql]
+      );
+      return res.status(200).json({
+        success: true,
+        message: 'Upcoming-only call tracking initialized. Only new calls from now will be saved.',
+        syncedCount: 0,
+        skippedOldCount: incomingLogs.length,
+        totalReceived: incomingLogs.length,
+        trackingSince: trackingSinceMs,
+      });
+    } else {
+      trackingSinceMs = toEpochMs(staffInfo.call_log_tracking_since);
+    }
+
+    if (incomingLogs.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No call logs to sync.',
+        syncedCount: 0,
+        skippedOldCount: 0,
+        totalReceived: 0,
+        trackingSince: trackingSinceMs,
+      });
+    }
+
+    // Cap batch size at 500 per sync request and strictly ignore calls older than trackingSinceMs
     const batch = incomingLogs.slice(0, 500);
     const values = [];
+    let skippedOldCount = 0;
 
     for (const item of batch) {
       const rawPhone = String(item.phoneNumber || item.number || '').trim();
       if (!rawPhone) continue;
+
+      const rawTs = item.callTimestamp ?? item.timestamp ?? Date.now();
+      const callMs = toEpochMs(rawTs);
+
+      // Strictly skip any old call from before tracking was enabled!
+      if (callMs < trackingSinceMs) {
+        skippedOldCount++;
+        continue;
+      }
+
       const phone = rawPhone.slice(0, 30);
       const contactName = String(item.contactName || item.name || '').trim().slice(0, 150) || null;
       const callType = normalizeCallType(item.callType || item.type);
       const durationSeconds = Math.max(0, parseInt(item.durationSeconds ?? item.duration ?? 0, 10) || 0);
-      const rawTs = item.callTimestamp ?? item.timestamp ?? Date.now();
-      const mysqlTs = toMySqlDateTime(rawTs);
-      const keySource = item.deviceCallKey || `${phone}_${rawTs}_${callType}`;
+      const mysqlTs = toMySqlDateTime(callMs);
+      const keySource = item.deviceCallKey || `${phone}_${callMs}_${callType}`;
       const deviceCallKey = String(keySource).trim().slice(0, 160);
 
       values.push([
@@ -131,13 +274,16 @@ async function syncCallLogs(req, res, next) {
     if (values.length === 0) {
       return res.status(200).json({
         success: true,
-        message: 'No valid call logs in batch.',
+        message: skippedOldCount > 0
+          ? `Skipped ${skippedOldCount} older calls before tracking started.`
+          : 'No valid upcoming call logs in batch.',
         syncedCount: 0,
+        skippedOldCount,
         totalReceived: incomingLogs.length,
+        trackingSince: trackingSinceMs,
       });
     }
 
-    // Bulk upsert
     const placeholders = values.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
     const flatParams = values.flat();
 
@@ -155,9 +301,11 @@ async function syncCallLogs(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      message: `Synced ${values.length} call logs successfully.`,
+      message: `Synced ${values.length} upcoming call logs successfully.`,
       syncedCount: values.length,
+      skippedOldCount,
       totalReceived: incomingLogs.length,
+      trackingSince: trackingSinceMs,
     });
   } catch (err) {
     next(err);
@@ -166,7 +314,6 @@ async function syncCallLogs(req, res, next) {
 
 /**
  * GET /call-logs (MD sees all, Lead sees own team + self, Employee sees own)
- * Query: staffId, type (ALL|INCOMING|OUTGOING|MISSED|REJECTED), status (ALL|PENDING|LOGGED), q, from, to, page, limit
  */
 async function getCallLogs(req, res, next) {
   try {
@@ -191,7 +338,6 @@ async function getCallLogs(req, res, next) {
       baseWhere.push('cl.staff_id = ?');
       baseParams.push(callerId);
     } else if (isLead && !isMD) {
-      // Lead sees own call logs + call logs of employees in their team
       const [teamRows] = await pool.query('SELECT id FROM teams WHERE lead_id = ?', [callerId]);
       const teamIds = teamRows.map((t) => t.id);
       if (teamIds.length > 0) {
@@ -228,7 +374,6 @@ async function getCallLogs(req, res, next) {
 
     const baseWhereSql = baseWhere.length > 0 ? `WHERE ${baseWhere.join(' AND ')}` : '';
 
-    // Summary counts (ignoring type/status filter so tabs always show accurate counts)
     const [summaryRows] = await pool.query(
       `SELECT
          COUNT(*) as total,
@@ -254,7 +399,6 @@ async function getCallLogs(req, res, next) {
       pending: Number(summaryRows[0]?.pending || 0),
     };
 
-    // Apply type and status filters for paginated rows
     const listWhere = [...baseWhere];
     const listParams = [...baseParams];
 
@@ -304,7 +448,6 @@ async function getCallLogs(req, res, next) {
       [...listParams, limit, offset]
     );
 
-    // Distinct staff list for CRM filter dropdown
     let staffList = [];
     if (isMD || isLead) {
       const staffFilterWhere = isMD
@@ -355,8 +498,6 @@ async function getCallLogs(req, res, next) {
 
 /**
  * PATCH /call-logs/:id/mark-logged
- * Marks a synced phone call log as converted to a CRM Call Entry.
- * Body: { reportId }
  */
 async function markCallLogLogged(req, res, next) {
   try {
@@ -384,8 +525,44 @@ async function markCallLogLogged(req, res, next) {
   }
 }
 
+/**
+ * DELETE /call-logs/clear-old (MD/Admin only)
+ * Clears previously synced test/old call logs and sets tracking anchor to NOW()
+ * so only upcoming calls are recorded going forward.
+ */
+async function clearOldCallLogs(req, res, next) {
+  try {
+    await ensureCallLogsTable();
+    const targetStaffId = req.query.staffId || req.body?.staffId || null;
+    const nowSql = toMySqlDateTime(Date.now());
+
+    if (targetStaffId && targetStaffId !== 'ALL') {
+      const [del] = await pool.query('DELETE FROM staff_call_logs WHERE staff_id = ?', [targetStaffId]);
+      await pool.query('UPDATE staff_users SET call_log_tracking_since = ? WHERE id = ?', [nowSql, targetStaffId]);
+      return res.status(200).json({
+        success: true,
+        deletedCount: del.affectedRows || 0,
+        message: `Cleared ${del.affectedRows || 0} old call logs for employee and anchored upcoming-only tracking from now.`,
+      });
+    }
+
+    const [del] = await pool.query('DELETE FROM staff_call_logs');
+    await pool.query('UPDATE staff_users SET call_log_tracking_since = ? WHERE call_log_tracking_since IS NOT NULL', [nowSql]);
+    return res.status(200).json({
+      success: true,
+      deletedCount: del.affectedRows || 0,
+      message: `Cleared ${del.affectedRows || 0} old call logs. Only upcoming calls will be recorded going forward.`,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
+  getTrackingStatus,
+  enableTracking,
   syncCallLogs,
   getCallLogs,
   markCallLogLogged,
+  clearOldCallLogs,
 };

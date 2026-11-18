@@ -89,8 +89,11 @@ router.post('/admin/reset-early-data', requireMD, crmConfig.resetEarlyTestData);
 // ==========================================================
 // 11. STAFF PHONE CALL LOGS (Mobile Sync -> CRM Call Entry)
 // ==========================================================
+router.get('/call-logs/tracking-status', crmCallLog.getTrackingStatus);
+router.post('/call-logs/enable-tracking', crmCallLog.enableTracking);
 router.post('/call-logs/sync', crmCallLog.syncCallLogs);
 router.get('/call-logs', crmCallLog.getCallLogs);
 router.patch('/call-logs/:id/mark-logged', crmCallLog.markCallLogLogged);
+router.delete('/call-logs/clear-old', requireMD, crmCallLog.clearOldCallLogs);
 
 module.exports = router;

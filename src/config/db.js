@@ -997,6 +997,14 @@ async function initializeDatabase() {
     `);
     console.log('📞 Verified staff_call_logs table in DB');
 
+    // Ensure call_log_tracking_since column exists on staff_users (upcoming-only call log anchor timestamp)
+    try {
+      const [trackingCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'call_log_tracking_since'");
+      if (trackingCol.length === 0) {
+        await connection.query('ALTER TABLE `staff_users` ADD COLUMN `call_log_tracking_since` DATETIME NULL');
+      }
+    } catch (_) {}
+
     // Note: Mock coupon seeding disabled to retain only real applicant and verified coupon entries.
 
   } catch (err) {
