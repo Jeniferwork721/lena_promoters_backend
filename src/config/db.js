@@ -467,13 +467,15 @@ async function initializeDatabase() {
     console.log('🏢 [DB Seed] Synced official Company Profile (LP-COMPANY) to DB');
 
     // Ensure official Admin (MD - Subaramanian) account in staff_users
-    // Default password 'Lena@12345'
+    // Default password 'Adminlena$01'
     await connection.query(`
       INSERT INTO \`staff_users\` (\`employee_id\`, \`full_name\`, \`email\`, \`phone_number\`, \`password_hash\`, \`plain_password\`, \`branch_location\`, \`role\`, \`department\`, \`designation\`, \`is_active\`)
-      VALUES ('LP-MD-01', 'Subaramanian (Managing Director)', 'subaramanian@lenapromoters.com', '9999999999', '$2a$10$s/vHSUVhjKDehaZq4/hiu.Vojtjcy.5LFVnzhMRev0f6Kv4qEwkFm', 'Lena@12345', 'Karaikudi – Head Office', 'ADMIN', 'Management', 'Managing Director', 1)
+      VALUES ('LP-MD-01', 'Subaramanian (Managing Director)', 'subaramanian@lenapromoters.com', '9999999999', '$2a$10$tYrlG7sV5fEvu9.Be3rg0ONWLg2yPfEr/gRgZNNlzqaL7/9mXu46y', 'Adminlena$01', 'Karaikudi – Head Office', 'ADMIN', 'Management', 'Managing Director', 1)
       ON DUPLICATE KEY UPDATE
         \`full_name\` = 'Subaramanian (Managing Director)',
         \`email\` = 'subaramanian@lenapromoters.com',
+        \`password_hash\` = '$2a$10$tYrlG7sV5fEvu9.Be3rg0ONWLg2yPfEr/gRgZNNlzqaL7/9mXu46y',
+        \`plain_password\` = 'Adminlena$01',
         \`role\` = 'ADMIN',
         \`designation\` = 'Managing Director',
         \`department\` = 'Management',
@@ -482,9 +484,16 @@ async function initializeDatabase() {
 
     // In case there was any previous record with 'md@lenapromoters.com' or 'subramanian@lenapromoters.com', update it to 'subaramanian@lenapromoters.com'
     try {
-      await connection.query("UPDATE `staff_users` SET `email` = 'subaramanian@lenapromoters.com', `full_name` = 'Subaramanian (Managing Director)' WHERE `email` IN ('md@lenapromoters.com', 'subramanian@lenapromoters.com')");
+      await connection.query("UPDATE `staff_users` SET `email` = 'subaramanian@lenapromoters.com', `full_name` = 'Subaramanian (Managing Director)', `password_hash` = '$2a$10$tYrlG7sV5fEvu9.Be3rg0ONWLg2yPfEr/gRgZNNlzqaL7/9mXu46y', `plain_password` = 'Adminlena$01' WHERE `email` IN ('md@lenapromoters.com', 'subramanian@lenapromoters.com')");
     } catch (_) {}
-    console.log('👤 [DB Seed] Verified Admin/MD account (subaramanian@lenapromoters.com) in DB');
+
+    // Remove lenacommunications email from staff_users
+    try {
+      await connection.query("DELETE FROM `staff_users` WHERE `email` LIKE '%lenacommunications%'");
+      console.log('🗑️ Removed lenacommunications from staff_users');
+    } catch (_) {}
+
+    console.log('👤 [DB Seed] Verified Admin/MD account (subaramanian@lenapromoters.com) with Adminlena$01 password in DB');
 
     // Note: Default mock customer and staff seeds removed to maintain production cleanliness.
     // Live accounts are managed via registration and direct database administration.
