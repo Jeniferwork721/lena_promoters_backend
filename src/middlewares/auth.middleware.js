@@ -42,7 +42,8 @@ function getAppRole(role) {
   if (!role) return 'employee';
   const r = role.toUpperCase();
   if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD') return 'MD';
-  if (r === 'MANAGER' || r === 'LEAD' || r === 'TEAM_LEAD' || r === 'SALES_MANAGER' || r === 'SALES_HEAD' || r === 'HEAD_MANAGER') return 'lead';
+  if (r === 'SALES_HEAD' || r === 'HEAD_MANAGER' || r === 'SALES_MANAGER' || r === 'GENERAL_MANAGER' || r === 'OVERALL_MANAGER') return 'sales_head';
+  if (r === 'MANAGER' || r === 'LEAD' || r === 'TEAM_LEAD') return 'lead';
   if (r === 'COUPON_HEAD' || r === 'COUPON_MANAGER') return 'coupon_head';
   if (r === 'HR' || r === 'HUMAN_RESOURCES') return 'hr';
   return 'employee';
@@ -79,10 +80,10 @@ function requireLeadOrMD(req, res, next) {
     });
   }
   const appRole = getAppRole(req.staff.role);
-  if (appRole !== 'MD' && appRole !== 'lead') {
+  if (appRole !== 'MD' && appRole !== 'sales_head' && appRole !== 'lead') {
     return res.status(403).json({
       success: false,
-      message: 'Forbidden. Team Lead or Admin privileges required for this action.',
+      message: 'Forbidden. Leadership or Admin privileges required for this action.',
     });
   }
   next();

@@ -223,18 +223,19 @@ async function createEmployee(req, res, next) {
       });
     }
 
-    // Resolve team assignment if leadId or teamId provided
-    let targetTeamId = teamId || null;
-    let targetLeadId = leadId || null;
+    // Resolve team assignment
+    const isExecutiveRole = ['SALES_HEAD', 'SALES_MANAGER', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HEAD_MANAGER', 'ADMIN'].includes(cleanRole);
+    const isLeadCreation = !isExecutiveRole && (['LEAD', 'TEAM_LEAD'].includes(cleanRole) || req.body.responsibility === 'TEAM_LEAD');
 
-    const isLeadCreation = ['LEAD', 'MANAGER', 'TEAM_LEAD', 'SALES_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER'].includes(cleanRole);
+    let targetTeamId = isExecutiveRole ? null : (teamId || null);
+    let targetLeadId = isExecutiveRole ? null : (leadId || null);
 
-    if (leadId && !targetTeamId) {
+    if (!isExecutiveRole && leadId && !targetTeamId) {
       const [leadTeam] = await pool.query('SELECT id FROM teams WHERE lead_id = ? LIMIT 1', [leadId]);
       if (leadTeam.length > 0) {
         targetTeamId = leadTeam[0].id;
       }
-    } else if (targetTeamId && !targetLeadId) {
+    } else if (!isExecutiveRole && targetTeamId && !targetLeadId) {
       const [teamRows] = await pool.query('SELECT lead_id FROM teams WHERE id = ? LIMIT 1', [targetTeamId]);
       if (teamRows.length > 0) {
         targetLeadId = teamRows[0].lead_id;
@@ -519,7 +520,8 @@ async function updateEmployee(req, res, next) {
     const cleanRole = String(role || currentEmp.role || 'SALES_EXECUTIVE').trim().toUpperCase();
     const cleanDesignation = String((designation !== undefined ? designation : (role || currentEmp.designation || currentEmp.role || 'Sales Executive')) || '').trim();
     const cleanDepartment = String((department !== undefined ? department : (currentEmp.department || '')) || '').trim();
-    const isTargetLead = ['MANAGER', 'LEAD', 'TEAM_LEAD', 'SALES_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER'].includes(cleanRole);
+    const isExecutiveRole = ['SALES_HEAD', 'SALES_MANAGER', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HEAD_MANAGER', 'ADMIN'].includes(cleanRole);
+    const isTargetLead = !isExecutiveRole && (['LEAD', 'TEAM_LEAD'].includes(cleanRole) || req.body.responsibility === 'TEAM_LEAD');
 
     const hasPermUpdate = permissions !== undefined;
     const permArray = hasPermUpdate ? (Array.isArray(permissions) ? permissions : parseJsonSafe(permissions, [])) : undefined;
@@ -541,10 +543,16 @@ async function updateEmployee(req, res, next) {
       return res.status(409).json({ success: false, message: 'Phone number is already registered with another staff member.', errors: { phone: 'Duplicate' } });
     }
 
-    let finalTeamId = currentEmp.team_id;
+    let finalTeamId = isExecutiveRole ? null : currentEmp.team_id;
     let finalRole = cleanRole;
 
-    if (isTargetLead) {
+    if (isExecutiveRole) {
+      // General manager / Sales Head / Sales Manager is not in a team, and does not lead a single team (they oversee all teams)
+      finalTeamId = null;
+      try {
+        await pool.query('UPDATE teams SET lead_id = NULL WHERE lead_id = ?', [employeeId]);
+      } catch (_) {}
+    } else if (isTargetLead) {
       // Promoting to or updating as Team Lead
       const [teamRows] = await pool.query('SELECT id, name FROM teams WHERE lead_id = ? LIMIT 1', [employeeId]);
       if (teamRows.length > 0) {
