@@ -386,8 +386,9 @@ async function getReports(req, res, next) {
     if (req.query.contact && !req.query.page && !req.query.limit && !req.query.from && !req.query.to) {
       return getReportByContact(req, res, next);
     }
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
-    const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
+    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -638,8 +639,9 @@ async function getReportById(req, res, next) {
   try {
     const rawId = req.params.id;
     const reportId = String(rawId).replace(/^rep_/, '');
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
-    const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
+    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
     const callerId = String(req.staff?.id || '');
 
     const [rows] = await pool.query(`
@@ -920,8 +922,9 @@ async function getDailyRegister(req, res, next) {
     await ensureWorkReportsColumns();
     const queryDate = req.query.date ? req.query.date.trim() : new Date().toISOString().split('T')[0];
     const employeeIdFilter = req.query.employeeId ? req.query.employeeId.trim() : null;
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD'].includes((req.staff.role || '').toUpperCase());
-    const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
+    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
 
     let whereConditions = ['wr.report_date = ?'];
@@ -1079,8 +1082,9 @@ async function getDailyRegister(req, res, next) {
  */
 async function getFollowUps(req, res, next) {
   try {
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
-    const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
+    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
 
     let whereConditions = ["wr.follow_up_date IS NOT NULL", "wr.work_status != 'Completed'"];

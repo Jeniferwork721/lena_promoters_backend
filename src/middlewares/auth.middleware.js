@@ -41,8 +41,8 @@ function verifyStaffToken(req, res, next) {
 function getAppRole(role) {
   if (!role) return 'employee';
   const r = role.toUpperCase();
-  if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD') return 'MD';
-  if (r === 'SALES_HEAD' || r === 'HEAD_MANAGER' || r === 'SALES_MANAGER' || r === 'GENERAL_MANAGER' || r === 'OVERALL_MANAGER') return 'sales_head';
+  if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD' || r === 'GENERAL_MANAGER' || r === 'OVERALL_MANAGER') return 'MD';
+  if (r === 'SALES_HEAD' || r === 'HEAD_MANAGER' || r === 'SALES_MANAGER') return 'sales_head';
   if (r === 'MANAGER' || r === 'LEAD' || r === 'TEAM_LEAD') return 'lead';
   if (r === 'COUPON_HEAD' || r === 'COUPON_MANAGER') return 'coupon_head';
   if (r === 'HR' || r === 'HUMAN_RESOURCES') return 'hr';
@@ -50,7 +50,7 @@ function getAppRole(role) {
 }
 
 /**
- * Middleware to require Managing Director (ADMIN / SUPER_ADMIN) role.
+ * Middleware to require Managing Director or General Manager (Admin / Executive) role.
  */
 function requireMD(req, res, next) {
   if (!req.staff) {
@@ -60,10 +60,25 @@ function requireMD(req, res, next) {
     });
   }
   const appRole = getAppRole(req.staff.role);
-  if (appRole !== 'MD') {
+  const r = (req.staff.role || '').toUpperCase();
+  const d = (req.staff.designation || '').toUpperCase();
+  const perms = Array.isArray(req.staff.permissions)
+    ? req.staff.permissions
+    : (typeof req.staff.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+
+  const isExecutiveAdmin =
+    appRole === 'MD' ||
+    r === 'GENERAL_MANAGER' ||
+    r === 'OVERALL_MANAGER' ||
+    d.includes('GENERAL MANAGER') ||
+    d.includes('MANAGING DIRECTOR') ||
+    perms.includes('*') ||
+    perms.includes('employees_manage');
+
+  if (!isExecutiveAdmin) {
     return res.status(403).json({
       success: false,
-      message: 'Forbidden. Managing Director (Admin) privileges required for this action.',
+      message: 'Forbidden. Managing Director / General Manager privileges required for this action.',
     });
   }
   next();

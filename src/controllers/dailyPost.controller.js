@@ -93,7 +93,7 @@ async function uploadDailyPost(req, res, next) {
     const perms = Array.isArray(req.staff?.permissions)
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
-    const canPost = ['ADMIN', 'SUPER_ADMIN', 'MD', 'SALES_HEAD'].includes(roleUpper) ||
+    const canPost = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'SALES_MANAGER'].includes(roleUpper) ||
                     perms.includes('*') ||
                     perms.includes('daily_posts');
     if (!canPost) {
@@ -180,7 +180,7 @@ async function deleteDailyPost(req, res, next) {
     const perms = Array.isArray(req.staff?.permissions)
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
-    const canDelete = ['ADMIN', 'SUPER_ADMIN', 'MD', 'SALES_HEAD'].includes(roleUpper) ||
+    const canDelete = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'SALES_MANAGER'].includes(roleUpper) ||
                       perms.includes('*') ||
                       perms.includes('daily_posts');
     if (!canDelete) {

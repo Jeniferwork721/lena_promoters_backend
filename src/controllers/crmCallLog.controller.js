@@ -320,8 +320,8 @@ async function getCallLogs(req, res, next) {
     await ensureCallLogsTable();
 
     const roleUpper = (req.staff?.role || '').toUpperCase();
-    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'SALES_HEAD', 'HEAD_MANAGER'].includes(roleUpper);
-    const isLead = ['TEAM_LEAD', 'LEAD', 'MANAGER', 'SALES_MANAGER'].includes(roleUpper);
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
+    const isLead = !isMD && ['TEAM_LEAD', 'LEAD', 'MANAGER'].includes(roleUpper);
     const callerId = req.staff?.id;
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));

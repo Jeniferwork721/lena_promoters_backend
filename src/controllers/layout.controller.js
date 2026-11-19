@@ -131,11 +131,15 @@ async function getLayoutById(req, res, next) {
 async function createLayout(req, res, next) {
   try {
     const staff = req.staff;
-    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'SALES_HEAD', 'HEAD_MANAGER', 'MANAGER'];
-    if (staff && !allowedRoles.includes((staff.role || '').toUpperCase())) {
+    const perms = Array.isArray(staff?.permissions)
+      ? staff.permissions
+      : (typeof staff?.permissions === 'string' ? JSON.parse(staff.permissions || '[]') : []);
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER', 'MANAGER'];
+    const canManageLayouts = allowedRoles.includes((staff?.role || '').toUpperCase()) || perms.includes('*') || perms.includes('layouts');
+    if (staff && !canManageLayouts) {
       return res.status(403).json({
         success: false,
-        message: 'Only MD or Sales Head can add new layouts.',
+        message: 'Only MD, General Manager, or staff with Layouts access can add new layouts.',
       });
     }
 
@@ -256,11 +260,15 @@ async function createLayout(req, res, next) {
 async function updateLayout(req, res, next) {
   try {
     const staff = req.staff;
-    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'SALES_HEAD', 'HEAD_MANAGER', 'MANAGER'];
-    if (staff && !allowedRoles.includes((staff.role || '').toUpperCase())) {
+    const perms = Array.isArray(staff?.permissions)
+      ? staff.permissions
+      : (typeof staff?.permissions === 'string' ? JSON.parse(staff.permissions || '[]') : []);
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER', 'MANAGER'];
+    const canManageLayouts = allowedRoles.includes((staff?.role || '').toUpperCase()) || perms.includes('*') || perms.includes('layouts');
+    if (staff && !canManageLayouts) {
       return res.status(403).json({
         success: false,
-        message: 'Only MD or Sales Head can update layouts.',
+        message: 'Only MD, General Manager, or staff with Layouts access can update layouts.',
       });
     }
 
@@ -391,11 +399,15 @@ async function updateLayout(req, res, next) {
 async function deleteLayout(req, res, next) {
   try {
     const staff = req.staff;
-    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'SALES_HEAD', 'HEAD_MANAGER', 'MANAGER'];
-    if (staff && !allowedRoles.includes((staff.role || '').toUpperCase())) {
+    const perms = Array.isArray(staff?.permissions)
+      ? staff.permissions
+      : (typeof staff?.permissions === 'string' ? JSON.parse(staff.permissions || '[]') : []);
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER', 'MANAGER'];
+    const canManageLayouts = allowedRoles.includes((staff?.role || '').toUpperCase()) || perms.includes('*') || perms.includes('layouts');
+    if (staff && !canManageLayouts) {
       return res.status(403).json({
         success: false,
-        message: 'Only MD or Sales Head can delete layouts.',
+        message: 'Only MD, General Manager, or staff with Layouts access can delete layouts.',
       });
     }
 
