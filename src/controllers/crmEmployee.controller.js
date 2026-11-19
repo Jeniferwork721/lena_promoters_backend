@@ -454,10 +454,31 @@ async function updateEmployeeAssignment(req, res, next) {
     let newLeadId = null;
 
     if (leadId) {
-      const [teamRows] = await pool.query('SELECT id, lead_id FROM teams WHERE lead_id = ? LIMIT 1', [leadId]);
+      let [teamRows] = await pool.query('SELECT id, lead_id FROM teams WHERE lead_id = ? LIMIT 1', [leadId]);
+      if (teamRows.length === 0) {
+        // Find lead user's info to check their team_id or auto-create their team
+        const [leadRows] = await pool.query('SELECT id, full_name, team_id FROM staff_users WHERE id = ? LIMIT 1', [leadId]);
+        if (leadRows.length > 0) {
+          const leadUser = leadRows[0];
+          if (leadUser.team_id) {
+            const [existingTeam] = await pool.query('SELECT id, lead_id FROM teams WHERE id = ? LIMIT 1', [leadUser.team_id]);
+            if (existingTeam.length > 0) {
+              await pool.query('UPDATE teams SET lead_id = ? WHERE id = ?', [leadId, leadUser.team_id]);
+              teamRows = existingTeam;
+            }
+          }
+          if (teamRows.length === 0) {
+            const teamName = `${leadUser.full_name}'s Team`;
+            const [insertRes] = await pool.query('INSERT INTO teams (name, lead_id) VALUES (?, ?)', [teamName, leadId]);
+            const createdTeamId = insertRes.insertId;
+            await pool.query('UPDATE staff_users SET team_id = ? WHERE id = ?', [createdTeamId, leadId]);
+            teamRows = [{ id: createdTeamId, lead_id: leadId }];
+          }
+        }
+      }
       if (teamRows.length > 0) {
         newTeamId = teamRows[0].id;
-        newLeadId = teamRows[0].lead_id;
+        newLeadId = teamRows[0].lead_id || leadId;
       }
     } else if (teamId) {
       const [teamRows] = await pool.query('SELECT id, lead_id FROM teams WHERE id = ? LIMIT 1', [teamId]);

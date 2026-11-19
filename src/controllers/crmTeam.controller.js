@@ -56,7 +56,7 @@ async function generateNextStaffId() {
  */
 async function getTeamLeads(req, res, next) {
   try {
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes((req.staff.role || '').toUpperCase());
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'OVERALL_MANAGER'].includes((req.staff.role || '').toUpperCase());
 
     const [rows] = await pool.query(`
       SELECT 
@@ -66,16 +66,23 @@ async function getTeamLeads(req, res, next) {
         s.phone_number as phone,
         s.email,
         s.branch_location as branch,
+        s.designation,
         'lead' as role,
-        t.id as teamId,
-        t.name as teamName,
+        COALESCE(t.id, s.team_id) as teamId,
+        COALESCE(t.name, CONCAT(s.full_name, '''s Team')) as teamName,
         s.plain_password,
         (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
-        (SELECT COUNT(*) FROM staff_users m WHERE m.team_id = t.id AND m.id != s.id) as employeeCount
+        (SELECT COUNT(*) FROM staff_users m WHERE m.team_id = COALESCE(t.id, s.team_id) AND m.id != s.id AND m.is_active = 1) as employeeCount
       FROM staff_users s
-      JOIN teams t ON t.lead_id = s.id
+      LEFT JOIN teams t ON (t.lead_id = s.id OR (s.team_id IS NOT NULL AND t.id = s.team_id))
       WHERE s.is_active = 1
-      ORDER BY t.name ASC
+        AND (
+          s.role IN ('TEAM_LEAD', 'LEAD')
+          OR s.designation LIKE '%Team Lead%'
+          OR t.lead_id = s.id
+        )
+      GROUP BY s.id
+      ORDER BY s.full_name ASC
     `);
 
     const data = rows.map(r => ({
@@ -85,9 +92,10 @@ async function getTeamLeads(req, res, next) {
       phone: r.phone,
       email: r.email,
       role: 'lead',
+      designation: r.designation || 'Team Lead',
       branch: r.branch || 'Karaikudi – Head Office',
-      teamId: String(r.teamId),
-      teamName: r.teamName,
+      teamId: r.teamId ? String(r.teamId) : '',
+      teamName: r.teamName || '',
       employeeCount: Number(r.employeeCount) || 0,
       hasAccount: Boolean(r.hasAccount),
       ...(isMD ? { password: r.plain_password || 'Lena@1234' } : {}),
