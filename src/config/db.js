@@ -466,6 +466,26 @@ async function initializeDatabase() {
     );
     console.log('🏢 [DB Seed] Synced official Company Profile (LP-COMPANY) to DB');
 
+    // Ensure official Admin (MD - Subramanian) account in staff_users
+    // Default password 'Lena@12345'
+    await connection.query(`
+      INSERT INTO \`staff_users\` (\`employee_id\`, \`full_name\`, \`email\`, \`phone_number\`, \`password_hash\`, \`plain_password\`, \`branch_location\`, \`role\`, \`department\`, \`designation\`, \`is_active\`)
+      VALUES ('LP-MD-01', 'Subramanian (Managing Director)', 'subramanian@lenapromoters.com', '9999999999', '$2a$10$s/vHSUVhjKDehaZq4/hiu.Vojtjcy.5LFVnzhMRev0f6Kv4qEwkFm', 'Lena@12345', 'Karaikudi – Head Office', 'ADMIN', 'Management', 'Managing Director', 1)
+      ON DUPLICATE KEY UPDATE
+        \`full_name\` = 'Subramanian (Managing Director)',
+        \`email\` = 'subramanian@lenapromoters.com',
+        \`role\` = 'ADMIN',
+        \`designation\` = 'Managing Director',
+        \`department\` = 'Management',
+        \`is_active\` = 1
+    `);
+
+    // In case there was any previous record with 'md@lenapromoters.com', update it to 'subramanian@lenapromoters.com'
+    try {
+      await connection.query("UPDATE `staff_users` SET `email` = 'subramanian@lenapromoters.com', `full_name` = 'Subramanian (Managing Director)' WHERE `email` = 'md@lenapromoters.com'");
+    } catch (_) {}
+    console.log('👤 [DB Seed] Verified Admin/MD account (subramanian@lenapromoters.com) in DB');
+
     // Note: Default mock customer and staff seeds removed to maintain production cleanliness.
     // Live accounts are managed via registration and direct database administration.
 
