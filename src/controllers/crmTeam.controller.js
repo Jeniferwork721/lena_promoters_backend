@@ -74,14 +74,18 @@ async function getTeamLeads(req, res, next) {
         (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
         (SELECT COUNT(*) FROM staff_users m WHERE m.team_id = COALESCE(t.id, s.team_id) AND m.id != s.id AND m.is_active = 1) as employeeCount
       FROM staff_users s
-      LEFT JOIN teams t ON (t.lead_id = s.id OR (s.team_id IS NOT NULL AND t.id = s.team_id))
+      LEFT JOIN teams t ON t.id = (
+        SELECT t2.id FROM teams t2 
+        WHERE t2.lead_id = s.id OR (s.team_id IS NOT NULL AND t2.id = s.team_id) 
+        ORDER BY (t2.lead_id = s.id) DESC 
+        LIMIT 1
+      )
       WHERE s.is_active = 1
         AND (
           s.role IN ('TEAM_LEAD', 'LEAD')
           OR s.designation LIKE '%Team Lead%'
-          OR t.lead_id = s.id
+          OR EXISTS (SELECT 1 FROM teams t3 WHERE t3.lead_id = s.id)
         )
-      GROUP BY s.id
       ORDER BY s.full_name ASC
     `);
 
