@@ -6,8 +6,9 @@ const fs = require('fs');
 const uploadBaseDir = path.join(__dirname, '..', '..', 'uploads');
 const receiptDir = path.join(uploadBaseDir, 'receipts');
 const propertyDir = path.join(uploadBaseDir, 'properties');
+const postDir = path.join(uploadBaseDir, 'posts');
 
-[uploadBaseDir, receiptDir, propertyDir].forEach(dir => {
+[uploadBaseDir, receiptDir, propertyDir, postDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -31,6 +32,8 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     if (file.fieldname === 'receipt' || req.path.includes('/receipt')) {
       cb(null, receiptDir);
+    } else if (file.fieldname === 'post' || file.fieldname === 'daily_post' || req.path.includes('/post') || (req.baseUrl && req.baseUrl.includes('daily-posts')) || (req.originalUrl && req.originalUrl.includes('daily-posts'))) {
+      cb(null, postDir);
     } else {
       cb(null, propertyDir);
     }

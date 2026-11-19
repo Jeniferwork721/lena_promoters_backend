@@ -997,6 +997,21 @@ async function initializeDatabase() {
     `);
     console.log('📞 Verified staff_call_logs table in DB');
 
+    // 17. Daily Promotional Posts Table (One post per day, for customer app weekly carousel)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`daily_posts\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`post_date\` DATE NOT NULL UNIQUE,
+        \`image_url\` VARCHAR(500) NOT NULL,
+        \`caption\` VARCHAR(255) NULL,
+        \`created_by\` INT NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_post_date\` (\`post_date\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    console.log('🖼️ Verified daily_posts table in DB');
+
     // Ensure call_log_tracking_since column exists on staff_users (upcoming-only call log anchor timestamp)
     try {
       const [trackingCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'call_log_tracking_since'");

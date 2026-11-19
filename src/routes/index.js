@@ -9,6 +9,7 @@ const uploadRoutes = require('./upload.routes');
 const branchRoutes = require('./branch.routes');
 const crmRoutes = require('./crm.routes');
 const layoutRoutes = require('./layout.routes');
+const dailyPostRoutes = require('./dailyPost.routes');
 const authController = require('../controllers/auth.controller');
 const { verifyStaffToken } = require('../middlewares/auth.middleware');
 
@@ -38,6 +39,7 @@ router.use('/coupons', couponRoutes);
 router.use('/site-visits', siteVisitRoutes);
 router.use('/uploads', uploadRoutes);
 router.use('/branches', branchRoutes);
+router.use('/daily-posts', dailyPostRoutes);
 
 // Mount CRM routes both at root and /crm namespace for full compatibility
 router.use('/', crmRoutes);
