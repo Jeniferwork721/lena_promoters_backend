@@ -95,7 +95,8 @@ async function getEmployees(req, res, next) {
         ORDER BY s.id DESC
         LIMIT ? OFFSET ?
       `, [...params, limit, offset]);
-    } catch (_) {
+    } catch (err) {
+      console.warn('getEmployees primary query failed, falling back:', err.message);
       [rows] = await pool.query(`
         SELECT 
           s.id,
@@ -649,7 +650,8 @@ async function updateEmployee(req, res, next) {
           WHERE id = ?
         `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, employeeId]);
       }
-    } catch (_) {
+    } catch (err) {
+      console.warn('updateEmployee primary UPDATE failed, falling back:', err.message);
       await pool.query(`
         UPDATE staff_users 
         SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?, branch_location = ?

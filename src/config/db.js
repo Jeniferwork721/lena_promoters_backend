@@ -55,6 +55,30 @@ async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
+    // 1b. Ensure CRM Columns on staff_users (department, designation, permissions, team_id, plain_password)
+    const criticalStaffCols = [
+      { name: 'role', def: "VARCHAR(50) NOT NULL DEFAULT 'STAFF' AFTER `branch_location`" },
+      { name: 'department', def: "VARCHAR(100) NULL AFTER `role`" },
+      { name: 'designation', def: "VARCHAR(150) NULL AFTER `role`" },
+      { name: 'permissions', def: "JSON NULL AFTER `department`" },
+      { name: 'team_id', def: "INT NULL AFTER `role`" },
+      { name: 'must_change_password', def: "TINYINT(1) NOT NULL DEFAULT 0 AFTER `team_id`" },
+      { name: 'plain_password', def: "VARCHAR(255) NULL AFTER `password_hash`" },
+      { name: 'created_by', def: "INT NULL AFTER `must_change_password`" },
+      { name: 'call_log_tracking_since', def: "DATETIME NULL" },
+    ];
+    for (const col of criticalStaffCols) {
+      try {
+        const [c] = await connection.query(`SHOW COLUMNS FROM \`staff_users\` LIKE '${col.name}'`);
+        if (c.length === 0) {
+          await connection.query(`ALTER TABLE \`staff_users\` ADD COLUMN \`${col.name}\` ${col.def}`);
+          console.log(`✅ [DB Migration] Added column '${col.name}' to 'staff_users'`);
+        }
+      } catch (err) {
+        console.warn(`[DB Migration] Column '${col.name}' check/add warning:`, err.message);
+      }
+    }
+
     // 2. OTP Codes Table
     await connection.query(`
       CREATE TABLE IF NOT EXISTS \`otp_codes\` (
@@ -468,20 +492,24 @@ async function initializeDatabase() {
 
     // Ensure official Admin (MD - Subaramanian) account in staff_users
     // Default password 'Adminlena$01'
-    await connection.query(`
-      INSERT INTO \`staff_users\` (\`employee_id\`, \`full_name\`, \`email\`, \`phone_number\`, \`password_hash\`, \`plain_password\`, \`branch_location\`, \`role\`, \`department\`, \`designation\`, \`permissions\`, \`is_active\`)
-      VALUES ('LP-MD-01', 'Subaramanian (Managing Director)', 'subaramanian@lenapromoters.com', '9999999999', '$2a$10$L1hMXAOv8LsQdDB7imwoB.OPGg3JaXdQ/dmZAwx7Bz86ZQZXlVWwa', 'Adminlena$01', 'Karaikudi – Head Office', 'ADMIN', 'Management', 'Managing Director', '["*"]', 1)
-      ON DUPLICATE KEY UPDATE
-        \`full_name\` = 'Subaramanian (Managing Director)',
-        \`email\` = 'subaramanian@lenapromoters.com',
-        \`password_hash\` = '$2a$10$L1hMXAOv8LsQdDB7imwoB.OPGg3JaXdQ/dmZAwx7Bz86ZQZXlVWwa',
-        \`plain_password\` = 'Adminlena$01',
-        \`role\` = 'ADMIN',
-        \`designation\` = 'Managing Director',
-        \`department\` = 'Management',
-        \`permissions\` = '["*"]',
-        \`is_active\` = 1
-    `);
+    try {
+      await connection.query(`
+        INSERT INTO \`staff_users\` (\`employee_id\`, \`full_name\`, \`email\`, \`phone_number\`, \`password_hash\`, \`plain_password\`, \`branch_location\`, \`role\`, \`department\`, \`designation\`, \`permissions\`, \`is_active\`)
+        VALUES ('LP-MD-01', 'Subaramanian (Managing Director)', 'subaramanian@lenapromoters.com', '9999999999', '$2a$10$L1hMXAOv8LsQdDB7imwoB.OPGg3JaXdQ/dmZAwx7Bz86ZQZXlVWwa', 'Adminlena$01', 'Karaikudi – Head Office', 'ADMIN', 'Management', 'Managing Director', '["*"]', 1)
+        ON DUPLICATE KEY UPDATE
+          \`full_name\` = 'Subaramanian (Managing Director)',
+          \`email\` = 'subaramanian@lenapromoters.com',
+          \`password_hash\` = '$2a$10$L1hMXAOv8LsQdDB7imwoB.OPGg3JaXdQ/dmZAwx7Bz86ZQZXlVWwa',
+          \`plain_password\` = 'Adminlena$01',
+          \`role\` = 'ADMIN',
+          \`designation\` = 'Managing Director',
+          \`department\` = 'Management',
+          \`permissions\` = '["*"]',
+          \`is_active\` = 1
+      `);
+    } catch (adminErr) {
+      console.warn('[DB Seed] Admin MD sync error:', adminErr.message);
+    }
 
     // In case there was any previous record with 'md@lenapromoters.com' or 'subramanian@lenapromoters.com', update it to 'subaramanian@lenapromoters.com'
     try {
