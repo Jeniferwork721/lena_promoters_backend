@@ -3,6 +3,16 @@ const { pool } = require('../config/db');
 const { sendStaffWelcomeEmail } = require('../services/email.service');
 const { generateNextStaffId } = require('./crmTeam.controller');
 
+function parseJsonSafe(val, fallback = []) {
+  if (!val) return fallback;
+  if (Array.isArray(val) || (typeof val === 'object' && val !== null)) return val;
+  try {
+    return JSON.parse(val);
+  } catch (_) {
+    return fallback;
+  }
+}
+
 /**
  * 16. GET /employees (MD all, Lead own team)
  * Filters: teamId, leadId, unassigned=true, q (name or phone).
@@ -70,6 +80,7 @@ async function getEmployees(req, res, next) {
           s.designation as designation,
           s.department as department,
           s.branch_location as branch,
+          s.permissions as permissions,
           s.team_id as teamId,
           t.name as teamName,
           t.lead_id as leadId,
@@ -120,6 +131,7 @@ async function getEmployees(req, res, next) {
       designation: r.designation || r.role || 'Sales Executive',
       department: r.department || null,
       branch: r.branch || 'Karaikudi – Head Office',
+      permissions: parseJsonSafe(r.permissions, []),
       teamId: r.teamId ? String(r.teamId) : null,
       teamName: r.teamName || null,
       leadId: r.leadId ? String(r.leadId) : null,
@@ -150,7 +162,7 @@ async function getEmployees(req, res, next) {
  */
 async function createEmployee(req, res, next) {
   try {
-    const { name, phone, email, leadId, teamId, role, designation, department, branch } = req.body;
+    const { name, phone, email, leadId, teamId, role, designation, department, branch, permissions } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -233,22 +245,33 @@ async function createEmployee(req, res, next) {
     const employeeId = await generateNextStaffId();
     const tempPassword = 'Lena@1234';
     const passwordHash = await bcrypt.hash(tempPassword, 10);
+    const permArray = Array.isArray(permissions) ? permissions : parseJsonSafe(permissions, []);
+    const permJson = permArray.length > 0 ? JSON.stringify(permArray) : null;
 
     let insertResult;
     try {
       [insertResult] = await pool.query(
         `INSERT INTO staff_users 
-         (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, team_id, must_change_password)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-        [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, targetTeamId]
+         (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, permissions, team_id, must_change_password)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, permJson, targetTeamId]
       );
     } catch (_) {
-      [insertResult] = await pool.query(
-        `INSERT INTO staff_users 
-         (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, team_id, must_change_password)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-        [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, targetTeamId]
-      );
+      try {
+        [insertResult] = await pool.query(
+          `INSERT INTO staff_users 
+           (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, team_id, must_change_password)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+          [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, targetTeamId]
+        );
+      } catch (_) {
+        [insertResult] = await pool.query(
+          `INSERT INTO staff_users 
+           (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, team_id, must_change_password)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+          [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, targetTeamId]
+        );
+      }
     }
     const newStaffId = insertResult.insertId;
 
@@ -291,6 +314,7 @@ async function createEmployee(req, res, next) {
         designation: cleanDesignation,
         department: cleanDepartment || null,
         branch: cleanBranch,
+        permissions: permArray,
         teamId: targetTeamId ? String(targetTeamId) : null,
         leadId: targetLeadId ? String(targetLeadId) : null,
         hasAccount: true,
@@ -323,6 +347,8 @@ async function getEmployeeById(req, res, next) {
           s.role,
           s.designation as designation,
           s.department as department,
+          s.branch_location as branch,
+          s.permissions as permissions,
           s.team_id as teamId,
           t.name as teamName,
           t.lead_id as leadId,
@@ -344,6 +370,7 @@ async function getEmployeeById(req, res, next) {
           s.phone_number as phone,
           s.email,
           s.role,
+          s.branch_location as branch,
           s.team_id as teamId,
           t.name as teamName,
           t.lead_id as leadId,
@@ -389,6 +416,8 @@ async function getEmployeeById(req, res, next) {
         role: employee.role || 'employee',
         designation: employee.designation || employee.role || 'Sales Executive',
         department: employee.department || null,
+        branch: employee.branch || 'Karaikudi – Head Office',
+        permissions: parseJsonSafe(employee.permissions, []),
         teamId: employee.teamId ? String(employee.teamId) : null,
         teamName: employee.teamName || null,
         leadId: employee.leadId ? String(employee.leadId) : null,
@@ -475,7 +504,7 @@ async function updateEmployeeAssignment(req, res, next) {
 async function updateEmployee(req, res, next) {
   try {
     const employeeId = req.params.id;
-    const { name, phone, email, role, designation, department, leadId, teamName, branch } = req.body;
+    const { name, phone, email, role, designation, department, leadId, teamName, branch, permissions } = req.body;
 
     const [empRows] = await pool.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [employeeId]);
     if (empRows.length === 0) {
@@ -491,6 +520,10 @@ async function updateEmployee(req, res, next) {
     const cleanDesignation = String((designation !== undefined ? designation : (role || currentEmp.designation || currentEmp.role || 'Sales Executive')) || '').trim();
     const cleanDepartment = String((department !== undefined ? department : (currentEmp.department || '')) || '').trim();
     const isTargetLead = ['MANAGER', 'LEAD', 'TEAM_LEAD', 'SALES_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER'].includes(cleanRole);
+
+    const hasPermUpdate = permissions !== undefined;
+    const permArray = hasPermUpdate ? (Array.isArray(permissions) ? permissions : parseJsonSafe(permissions, [])) : undefined;
+    const permJson = hasPermUpdate ? JSON.stringify(permArray) : null;
 
     if (!cleanName) {
       return res.status(400).json({ success: false, message: 'Employee name is required.', errors: { name: 'Required' } });
@@ -574,11 +607,19 @@ async function updateEmployee(req, res, next) {
 
     // Update staff_users
     try {
-      await pool.query(`
-        UPDATE staff_users 
-        SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?
-        WHERE id = ?
-      `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, employeeId]);
+      if (hasPermUpdate) {
+        await pool.query(`
+          UPDATE staff_users 
+          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, permissions = ?
+          WHERE id = ?
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, employeeId]);
+      } else {
+        await pool.query(`
+          UPDATE staff_users 
+          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?
+          WHERE id = ?
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, employeeId]);
+      }
     } catch (_) {
       await pool.query(`
         UPDATE staff_users 
@@ -601,6 +642,7 @@ async function updateEmployee(req, res, next) {
           s.designation as designation,
           s.department as department,
           s.branch_location as branch,
+          s.permissions as permissions,
           s.team_id as teamId,
           t.name as teamName,
           t.lead_id as leadId,
@@ -650,6 +692,7 @@ async function updateEmployee(req, res, next) {
         designation: updated.designation || cleanDesignation,
         department: updated.department || cleanDepartment || null,
         branch: updated.branch || cleanBranch,
+        permissions: parseJsonSafe(updated.permissions, permArray || []),
         teamId: updated.teamId ? String(updated.teamId) : (finalTeamId ? String(finalTeamId) : null),
         teamName: updated.teamName || null,
         leadId: updated.leadId ? String(updated.leadId) : null,

@@ -89,6 +89,20 @@ async function getAllDailyPosts(req, res, next) {
  */
 async function uploadDailyPost(req, res, next) {
   try {
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const canPost = ['ADMIN', 'SUPER_ADMIN', 'MD', 'SALES_HEAD'].includes(roleUpper) ||
+                    perms.includes('*') ||
+                    perms.includes('daily_posts');
+    if (!canPost) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You do not have permission to post daily posts.',
+      });
+    }
+
     const file = req.file || (req.files && req.files[0]);
     let imageUrl = req.body.image_url;
 
@@ -162,6 +176,20 @@ async function uploadDailyPost(req, res, next) {
  */
 async function deleteDailyPost(req, res, next) {
   try {
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const canDelete = ['ADMIN', 'SUPER_ADMIN', 'MD', 'SALES_HEAD'].includes(roleUpper) ||
+                      perms.includes('*') ||
+                      perms.includes('daily_posts');
+    if (!canDelete) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You do not have permission to delete daily posts.',
+      });
+    }
+
     const { id } = req.params;
     const [rows] = await pool.query('SELECT * FROM daily_posts WHERE id = ?', [id]);
     if (rows.length === 0) {

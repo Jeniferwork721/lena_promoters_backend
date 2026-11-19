@@ -469,8 +469,8 @@ async function initializeDatabase() {
     // Ensure official Admin (MD - Subaramanian) account in staff_users
     // Default password 'Adminlena$01'
     await connection.query(`
-      INSERT INTO \`staff_users\` (\`employee_id\`, \`full_name\`, \`email\`, \`phone_number\`, \`password_hash\`, \`plain_password\`, \`branch_location\`, \`role\`, \`department\`, \`designation\`, \`is_active\`)
-      VALUES ('LP-MD-01', 'Subaramanian (Managing Director)', 'subaramanian@lenapromoters.com', '9999999999', '$2a$10$tYrlG7sV5fEvu9.Be3rg0ONWLg2yPfEr/gRgZNNlzqaL7/9mXu46y', 'Adminlena$01', 'Karaikudi – Head Office', 'ADMIN', 'Management', 'Managing Director', 1)
+      INSERT INTO \`staff_users\` (\`employee_id\`, \`full_name\`, \`email\`, \`phone_number\`, \`password_hash\`, \`plain_password\`, \`branch_location\`, \`role\`, \`department\`, \`designation\`, \`permissions\`, \`is_active\`)
+      VALUES ('LP-MD-01', 'Subaramanian (Managing Director)', 'subaramanian@lenapromoters.com', '9999999999', '$2a$10$tYrlG7sV5fEvu9.Be3rg0ONWLg2yPfEr/gRgZNNlzqaL7/9mXu46y', 'Adminlena$01', 'Karaikudi – Head Office', 'ADMIN', 'Management', 'Managing Director', '["*"]', 1)
       ON DUPLICATE KEY UPDATE
         \`full_name\` = 'Subaramanian (Managing Director)',
         \`email\` = 'subaramanian@lenapromoters.com',
@@ -479,6 +479,7 @@ async function initializeDatabase() {
         \`role\` = 'ADMIN',
         \`designation\` = 'Managing Director',
         \`department\` = 'Management',
+        \`permissions\` = '["*"]',
         \`is_active\` = 1
     `);
 
@@ -828,6 +829,11 @@ async function initializeDatabase() {
       const [deptCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'department'");
       if (deptCol.length === 0) {
         await connection.query("ALTER TABLE `staff_users` ADD COLUMN `department` VARCHAR(100) NULL AFTER `role`");
+      }
+
+      const [permCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'permissions'");
+      if (permCol.length === 0) {
+        await connection.query("ALTER TABLE `staff_users` ADD COLUMN `permissions` JSON NULL AFTER `department`");
       }
 
       const [desigCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'designation'");

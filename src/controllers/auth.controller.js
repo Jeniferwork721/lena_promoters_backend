@@ -30,6 +30,9 @@ async function issueTokens(user, userType = 'STAFF') {
         fullName: user.full_name,
         role: user.role,
         branch: user.branch_location,
+        permissions: user.permissions
+          ? (typeof user.permissions === 'string' ? parseJsonSafe(user.permissions, []) : user.permissions)
+          : (['ADMIN', 'SUPER_ADMIN', 'MD'].includes((user.role || '').toUpperCase()) ? ['*'] : []),
         userType: 'STAFF',
       }
     : {
@@ -183,6 +186,9 @@ async function loginWithPassword(req, res, next) {
         branch: staff.branch_location,
         role: staff.role,
         appRole,
+        permissions: staff.permissions
+          ? (typeof staff.permissions === 'string' ? parseJsonSafe(staff.permissions, []) : staff.permissions)
+          : (['ADMIN', 'SUPER_ADMIN', 'MD'].includes((staff.role || '').toUpperCase()) ? ['*'] : []),
         teamId: staff.team_id || null,
         teamName,
         mustChangePassword: Boolean(staff.must_change_password),
@@ -219,6 +225,9 @@ async function loginWithPassword(req, res, next) {
         designation: staff.designation || staff.role || 'Sales Executive',
         teamId: staff.team_id ? String(staff.team_id) : null,
         branch: staff.branch_location || 'Karaikudi',
+        permissions: staff.permissions
+          ? (typeof staff.permissions === 'string' ? parseJsonSafe(staff.permissions, []) : staff.permissions)
+          : (['ADMIN', 'SUPER_ADMIN', 'MD'].includes((staff.role || '').toUpperCase()) ? ['*'] : []),
       },
     });
   } catch (err) {
@@ -832,6 +841,11 @@ async function getProfile(req, res, next) {
         phone: staff.phone_number,
         branch: staff.branch_location,
         role: staff.role,
+        department: staff.department || null,
+        designation: staff.designation || null,
+        permissions: staff.permissions
+          ? (typeof staff.permissions === 'string' ? parseJsonSafe(staff.permissions, []) : staff.permissions)
+          : (['ADMIN', 'SUPER_ADMIN', 'MD'].includes((staff.role || '').toUpperCase()) ? ['*'] : []),
         isProfileCompleted: Boolean(staff.is_profile_completed),
         isVerifiedEmployee: Boolean(staff.is_verified_employee),
         profileCompleted: Boolean(staff.is_profile_completed),
@@ -1795,8 +1809,13 @@ async function getMe(req, res, next) {
         branch: staff.branch_location,
         role: staff.role,
         appRole,
+        permissions: staff.permissions
+          ? (typeof staff.permissions === 'string' ? parseJsonSafe(staff.permissions, []) : staff.permissions)
+          : (['ADMIN', 'SUPER_ADMIN', 'MD'].includes((staff.role || '').toUpperCase()) ? ['*'] : []),
         teamId: staff.team_id || null,
         teamName: staff.team_name || null,
+        department: staff.department || null,
+        designation: staff.designation || null,
         mustChangePassword: Boolean(staff.must_change_password),
         isProfileCompleted: Boolean(staff.is_profile_completed),
         isVerifiedEmployee: Boolean(staff.is_verified_employee),

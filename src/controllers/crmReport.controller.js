@@ -414,8 +414,14 @@ async function getReports(req, res, next) {
     let whereConditions = ['1=1'];
     let params = [];
 
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const hasAllReports = isMD || perms.includes('*') || perms.includes('reports_team') || perms.includes('reports_employee');
+    const hasOwnTeamReport = isLead || perms.includes('reports_own_team');
+
     // Role-based scoping
-    if (isMD) {
+    if (hasAllReports) {
       if (employeeId) {
         whereConditions.push('(wr.employee_id = ? OR s.employee_id = ?)');
         params.push(employeeId, employeeId);
@@ -424,8 +430,8 @@ async function getReports(req, res, next) {
         whereConditions.push('s.team_id = ?');
         params.push(teamId);
       }
-    } else if (isLead) {
-      // Lead sees reports of own team
+    } else if (hasOwnTeamReport) {
+      // Lead or staff with own team report access sees reports of their own team
       whereConditions.push('s.team_id = ?');
       params.push(req.staff.teamId || req.staff.team_id || 0);
 
