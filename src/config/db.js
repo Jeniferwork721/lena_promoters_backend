@@ -495,11 +495,11 @@ async function initializeDatabase() {
     try {
       await connection.query(`
         INSERT INTO \`staff_users\` (\`employee_id\`, \`full_name\`, \`email\`, \`phone_number\`, \`password_hash\`, \`plain_password\`, \`branch_location\`, \`role\`, \`department\`, \`designation\`, \`permissions\`, \`is_active\`)
-        VALUES ('LP-MD-01', 'Subaramanian (Managing Director)', 'subaramanian@lenapromoters.com', '9999999999', '$2a$10$L1hMXAOv8LsQdDB7imwoB.OPGg3JaXdQ/dmZAwx7Bz86ZQZXlVWwa', 'Adminlena$01', 'Karaikudi – Head Office', 'ADMIN', 'Management', 'Managing Director', '["*"]', 1)
+        VALUES ('LP-MD-01', 'Subaramanian (Managing Director)', 'subaramanian@lenapromoters.com', '9999999999', '$2a$10$st7JH5sCNNCmQ.Imr334AO1ps9PMae48S20eDNHYiW0kXMb/1.BsG', 'Adminlena$01', 'Karaikudi – Head Office', 'ADMIN', 'Management', 'Managing Director', '["*"]', 1)
         ON DUPLICATE KEY UPDATE
           \`full_name\` = 'Subaramanian (Managing Director)',
           \`email\` = 'subaramanian@lenapromoters.com',
-          \`password_hash\` = '$2a$10$L1hMXAOv8LsQdDB7imwoB.OPGg3JaXdQ/dmZAwx7Bz86ZQZXlVWwa',
+          \`password_hash\` = '$2a$10$st7JH5sCNNCmQ.Imr334AO1ps9PMae48S20eDNHYiW0kXMb/1.BsG',
           \`plain_password\` = 'Adminlena$01',
           \`role\` = 'ADMIN',
           \`designation\` = 'Managing Director',
@@ -513,7 +513,7 @@ async function initializeDatabase() {
 
     // In case there was any previous record with 'md@lenapromoters.com' or 'subramanian@lenapromoters.com', update it to 'subaramanian@lenapromoters.com'
     try {
-      await connection.query("UPDATE `staff_users` SET `email` = 'subaramanian@lenapromoters.com', `full_name` = 'Subaramanian (Managing Director)', `password_hash` = '$2a$10$L1hMXAOv8LsQdDB7imwoB.OPGg3JaXdQ/dmZAwx7Bz86ZQZXlVWwa', `plain_password` = 'Adminlena$01' WHERE `email` IN ('md@lenapromoters.com', 'subramanian@lenapromoters.com')");
+      await connection.query("UPDATE `staff_users` SET `email` = 'subaramanian@lenapromoters.com', `full_name` = 'Subaramanian (Managing Director)', `password_hash` = '$2a$10$st7JH5sCNNCmQ.Imr334AO1ps9PMae48S20eDNHYiW0kXMb/1.BsG', `plain_password` = 'Adminlena$01' WHERE `email` IN ('md@lenapromoters.com', 'subramanian@lenapromoters.com')");
     } catch (_) {}
 
     // Remove lenacommunications email from staff_users
