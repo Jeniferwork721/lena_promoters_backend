@@ -492,7 +492,7 @@ async function getStaffEntries(req, res, next) {
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'COUPON_HEAD', 'SALES_HEAD', 'HEAD_MANAGER'].includes(roleUpper)
-      || perms.includes('*') || perms.includes('coupon_mgmt') || perms.includes('coupon_reports');
+      || perms.includes('*') || perms.includes('coupon_mgmt');
     const isLead = !isMD && ['TEAM_LEAD', 'LEAD', 'MANAGER'].includes(roleUpper);
     const callerId = req.staff?.id;
     const callerEmpId = req.staff?.employee_id;
@@ -1152,11 +1152,11 @@ async function staffDirectEntry(req, res, next) {
             dateOfBirth || '1990-01-01',
             phoneNumber.trim(),
             address.trim(),
-            referredBy ? referredBy.trim() : null,
+            referredBy ? referredBy.trim() : (req.staff?.full_name || req.staff?.name || null),
             isBonus ? 0.00 : entryFee,
             status,
-            staffName || 'Authorized Staff',
-            staffId || 'LP-EMP',
+            (req.staff?.full_name || req.staff?.name || staffName || 'Authorized Staff').trim(),
+            req.staff?.employee_id || req.staff?.id || staffId || 'LP-EMP',
             paymentTransId || 'DIRECT_CASH',
             paymentMode || 'Direct Cash',
             cleanScreenshotName,
@@ -1177,11 +1177,11 @@ async function staffDirectEntry(req, res, next) {
             dateOfBirth || '1990-01-01',
             phoneNumber.trim(),
             address.trim(),
-            referredBy ? referredBy.trim() : null,
+            referredBy ? referredBy.trim() : (req.staff?.full_name || req.staff?.name || null),
             isBonus ? 0.00 : entryFee,
             status,
-            staffName || 'Authorized Staff',
-            staffId || 'LP-EMP',
+            (req.staff?.full_name || req.staff?.name || staffName || 'Authorized Staff').trim(),
+            req.staff?.employee_id || req.staff?.id || staffId || 'LP-EMP',
             paymentTransId || 'DIRECT_CASH',
             paymentMode || 'Direct Cash',
             cleanScreenshotName,
@@ -1978,7 +1978,7 @@ async function getCouponReports(req, res, next) {
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'COUPON_HEAD', 'SALES_HEAD', 'HEAD_MANAGER'].includes(roleUpper)
-      || perms.includes('*') || perms.includes('coupon_mgmt') || perms.includes('coupon_reports');
+      || perms.includes('*') || perms.includes('coupon_mgmt');
     const isLead = !isMD && ['TEAM_LEAD', 'LEAD', 'MANAGER'].includes(roleUpper);
     const callerId = req.staff?.id;
     const callerEmpId = req.staff?.employee_id;
