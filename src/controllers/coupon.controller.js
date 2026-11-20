@@ -485,28 +485,82 @@ async function getStaffEntries(req, res, next) {
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 20));
     const offset = (page - 1) * limit;
 
-    // 1. Calculate overall metrics for Dashboard & Report
-    const [metricsRows] = await pool.query(`
-      SELECT 
-        COUNT(*) as totalEntries,
-        SUM(CASE WHEN status = 'PENDING_STAFF_VERIFICATION' THEN 1 ELSE 0 END) as pendingCount,
-        SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN 1 ELSE 0 END) as verifiedCount,
-        SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejectedCount,
-        SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN entry_fee ELSE 0 END) as totalCollected
-      FROM lucky_draw_coupons
-    `);
+    // 1. Resolve role and scope
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
 
-    const metrics = {
-      totalEntries: parseInt(metricsRows[0].totalEntries, 10) || 0,
-      pendingCount: parseInt(metricsRows[0].pendingCount, 10) || 0,
-      verifiedCount: parseInt(metricsRows[0].verifiedCount, 10) || 0,
-      rejectedCount: parseInt(metricsRows[0].rejectedCount, 10) || 0,
-      totalCollected: parseFloat(metricsRows[0].totalCollected || 0),
-    };
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'COUPON_HEAD', 'SALES_HEAD', 'HEAD_MANAGER'].includes(roleUpper)
+      || perms.includes('*') || perms.includes('coupon_mgmt') || perms.includes('coupon_reports');
+    const isLead = !isMD && ['TEAM_LEAD', 'LEAD', 'MANAGER'].includes(roleUpper);
+    const callerId = req.staff?.id;
+    const callerEmpId = req.staff?.employee_id;
+    const callerName = req.staff?.full_name || req.staff?.name || req.staff?.fullName;
 
     // 2. Build Filter Where Clause
     let whereClause = ' WHERE 1=1';
     const params = [];
+
+    // Role-based scoping: standard employee strictly sees own entries, team lead sees team, MD sees all
+    if (!isMD && !isLead) {
+      whereClause += ` AND (
+        staff_id = ?
+        OR staff_id = ?
+        OR staff_name = ?
+        OR referred_by = ?
+      )`;
+      params.push(String(callerId), callerEmpId || String(callerId), callerName || '', callerName || '');
+    } else if (isLead) {
+      const [teamRows] = await pool.query('SELECT id FROM teams WHERE lead_id = ? OR id = ?', [callerId, req.staff?.team_id || 0]);
+      const teamIds = teamRows.map((t) => t.id);
+      if (teamIds.length > 0) {
+        whereClause += ` AND (
+          staff_id = ?
+          OR staff_id = ?
+          OR staff_name = ?
+          OR staff_id IN (SELECT employee_id FROM staff_users WHERE team_id IN (${teamIds.map(() => '?').join(',')}))
+          OR staff_name IN (SELECT full_name FROM staff_users WHERE team_id IN (${teamIds.map(() => '?').join(',')}))
+          OR referred_by IN (SELECT full_name FROM staff_users WHERE team_id IN (${teamIds.map(() => '?').join(',')}))
+        )`;
+        params.push(String(callerId), callerEmpId || String(callerId), callerName || '', ...teamIds, ...teamIds, ...teamIds);
+      } else {
+        whereClause += ` AND (staff_id = ? OR staff_id = ? OR staff_name = ?)`;
+        params.push(String(callerId), callerEmpId || String(callerId), callerName || '');
+      }
+
+      if (staffId && staffId.trim().length > 0 && staffId !== 'ALL') {
+        const cleanId = staffId.trim();
+        whereClause += ` AND (staff_id = ? OR staff_name LIKE ? OR referred_by LIKE ?)`;
+        params.push(cleanId, `%${cleanId}%`, `%${cleanId}%`);
+      }
+    } else {
+      // MD / General Manager: Can view all staff entries or filter by any staff member
+      const hasStaffId = staffId && staffId.trim().length > 0 && staffId !== 'ALL';
+      const hasStaffName = staffName && staffName.trim().length > 0 && staffName !== 'ALL';
+
+      if (hasStaffId || hasStaffName) {
+        const cleanId = hasStaffId ? staffId.trim() : '';
+        const cleanName = hasStaffName ? staffName.trim() : '';
+
+        whereClause += ` AND (
+          staff_id = ?
+          OR staff_name LIKE ?
+          OR referred_by LIKE ?
+          OR referred_by LIKE ?
+          OR staff_name IN (SELECT full_name FROM staff_users WHERE employee_id = ?)
+          OR referred_by IN (SELECT full_name FROM staff_users WHERE employee_id = ?)
+        )`;
+        params.push(
+          cleanId || cleanName,
+          `%${cleanName || cleanId}%`,
+          `%${cleanId || cleanName}%`,
+          `%${cleanName || cleanId}%`,
+          cleanId || 'NO_STAFF_ID',
+          cleanId || 'NO_STAFF_ID'
+        );
+      }
+    }
 
     if (status && status !== 'ALL') {
       whereClause += ' AND status = ?';
@@ -533,30 +587,25 @@ async function getStaffEntries(req, res, next) {
       params.push(term, term, term, term, term, term);
     }
 
-    const hasStaffId = staffId && staffId.trim().length > 0 && staffId !== 'ALL';
-    const hasStaffName = staffName && staffName.trim().length > 0 && staffName !== 'ALL';
+    // Calculate scoped metrics
+    const [metricsRows] = await pool.query(`
+      SELECT 
+        COUNT(*) as totalEntries,
+        SUM(CASE WHEN status = 'PENDING_STAFF_VERIFICATION' THEN 1 ELSE 0 END) as pendingCount,
+        SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN 1 ELSE 0 END) as verifiedCount,
+        SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejectedCount,
+        SUM(CASE WHEN status = 'VERIFIED_AND_PAID' THEN entry_fee ELSE 0 END) as totalCollected
+      FROM lucky_draw_coupons
+      ${whereClause}
+    `, params);
 
-    if (hasStaffId || hasStaffName) {
-      const cleanId = hasStaffId ? staffId.trim() : '';
-      const cleanName = hasStaffName ? staffName.trim() : '';
-
-      whereClause += ` AND (
-        staff_id = ?
-        OR staff_name LIKE ?
-        OR referred_by LIKE ?
-        OR referred_by LIKE ?
-        OR staff_name IN (SELECT full_name FROM staff_users WHERE employee_id = ?)
-        OR referred_by IN (SELECT full_name FROM staff_users WHERE employee_id = ?)
-      )`;
-      params.push(
-        cleanId || cleanName,
-        `%${cleanName || cleanId}%`,
-        `%${cleanId || cleanName}%`,
-        `%${cleanName || cleanId}%`,
-        cleanId || 'NO_STAFF_ID',
-        cleanId || 'NO_STAFF_ID'
-      );
-    }
+    const metrics = {
+      totalEntries: parseInt(metricsRows[0]?.totalEntries || 0, 10),
+      pendingCount: parseInt(metricsRows[0]?.pendingCount || 0, 10),
+      verifiedCount: parseInt(metricsRows[0]?.verifiedCount || 0, 10),
+      rejectedCount: parseInt(metricsRows[0]?.rejectedCount || 0, 10),
+      totalCollected: parseFloat(metricsRows[0]?.totalCollected || 0),
+    };
 
     // 3. Count total matching filtered records
     const [countRows] = await pool.query(`SELECT COUNT(*) as filteredCount FROM lucky_draw_coupons${whereClause}`, params);
@@ -585,21 +634,46 @@ async function getStaffEntries(req, res, next) {
       [...params, limit, offset]
     );
 
-    // 6. Valid active employees from database for staff-based filter dropdown
+    // 6. Valid active employees from database for staff-based filter dropdown (scoped by role)
     let staffListRows = [];
     try {
-      const [dbStaff] = await pool.query(`
-        SELECT 
-          id,
-          employee_id AS staffId,
-          full_name AS staffName,
-          branch_location AS branch,
-          role
-        FROM staff_users
-        WHERE is_active = 1
-        ORDER BY full_name ASC
-      `);
-      staffListRows = dbStaff;
+      if (isMD) {
+        const [dbStaff] = await pool.query(`
+          SELECT 
+            id,
+            employee_id AS staffId,
+            full_name AS staffName,
+            branch_location AS branch,
+            role
+          FROM staff_users
+          WHERE is_active = 1
+          ORDER BY full_name ASC
+        `);
+        staffListRows = dbStaff;
+      } else if (isLead) {
+        const [teamRows] = await pool.query('SELECT id FROM teams WHERE lead_id = ? OR id = ?', [callerId, req.staff?.team_id || 0]);
+        const teamIds = teamRows.map((t) => t.id);
+        const [dbStaff] = await pool.query(`
+          SELECT 
+            id,
+            employee_id AS staffId,
+            full_name AS staffName,
+            branch_location AS branch,
+            role
+          FROM staff_users
+          WHERE is_active = 1 AND (id = ? OR team_id IN (${teamIds.length ? teamIds.map(() => '?').join(',') : '0'}))
+          ORDER BY full_name ASC
+        `, [callerId, ...(teamIds.length ? teamIds : [])]);
+        staffListRows = dbStaff;
+      } else {
+        staffListRows = [{
+          id: callerId,
+          staffId: callerEmpId,
+          staffName: callerName,
+          branch: req.staff?.branch_location || req.staff?.branch || 'Head Office',
+          role: req.staff?.role,
+        }];
+      }
     } catch (_) {}
 
     // 7. All Seasons / Events list for season filter dropdown & history
@@ -1898,6 +1972,18 @@ async function getCouponReports(req, res, next) {
       }
     }
 
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'COUPON_HEAD', 'SALES_HEAD', 'HEAD_MANAGER'].includes(roleUpper)
+      || perms.includes('*') || perms.includes('coupon_mgmt') || perms.includes('coupon_reports');
+    const isLead = !isMD && ['TEAM_LEAD', 'LEAD', 'MANAGER'].includes(roleUpper);
+    const callerId = req.staff?.id;
+    const callerEmpId = req.staff?.employee_id;
+    const callerName = req.staff?.full_name || req.staff?.name || req.staff?.fullName;
+
     let eventFilter = '';
     const params = [];
     if (filterApplied && targetEventId !== null) {
@@ -1911,6 +1997,31 @@ async function getCouponReports(req, res, next) {
       eventFilter = ' WHERE 1 = 0';
     }
 
+    // Role-based scope filter on coupons
+    let roleScopeFilter = '';
+    const scopeParams = [];
+    if (!isMD && !isLead) {
+      roleScopeFilter = eventFilter ? ' AND (c.staff_id = ? OR c.staff_name = ?)' : ' WHERE (c.staff_id = ? OR c.staff_name = ?)';
+      scopeParams.push(callerEmpId || String(callerId), callerName || '');
+    } else if (isLead) {
+      const [teamRows] = await pool.query('SELECT id FROM teams WHERE lead_id = ? OR id = ?', [callerId, req.staff?.team_id || 0]);
+      const teamIds = teamRows.map((t) => t.id);
+      if (teamIds.length > 0) {
+        roleScopeFilter = (eventFilter ? ' AND ' : ' WHERE ') + `(
+          c.staff_id = ? OR c.staff_name = ?
+          OR c.staff_id IN (SELECT employee_id FROM staff_users WHERE team_id IN (${teamIds.map(() => '?').join(',')}))
+          OR c.staff_name IN (SELECT full_name FROM staff_users WHERE team_id IN (${teamIds.map(() => '?').join(',')}))
+        )`;
+        scopeParams.push(callerEmpId || String(callerId), callerName || '', ...teamIds, ...teamIds);
+      } else {
+        roleScopeFilter = eventFilter ? ' AND (c.staff_id = ? OR c.staff_name = ?)' : ' WHERE (c.staff_id = ? OR c.staff_name = ?)';
+        scopeParams.push(callerEmpId || String(callerId), callerName || '');
+      }
+    }
+
+    const fullFilter = eventFilter + roleScopeFilter;
+    const allParams = [...params, ...scopeParams];
+
     // 1. Overall Totals
     const [summaryRows] = await pool.query(`
       SELECT 
@@ -1920,8 +2031,8 @@ async function getCouponReports(req, res, next) {
         SUM(CASE WHEN c.status = 'REJECTED' THEN 1 ELSE 0 END) as rejectedCount,
         SUM(CASE WHEN c.status = 'VERIFIED_AND_PAID' THEN c.entry_fee ELSE 0 END) as totalCollected
       FROM lucky_draw_coupons c
-      ${eventFilter}
-    `, params);
+      ${fullFilter}
+    `, allParams);
 
     const summary = {
       totalEntries: parseInt(summaryRows[0]?.totalEntries || 0, 10),
@@ -1944,10 +2055,10 @@ async function getCouponReports(req, res, next) {
         SUM(CASE WHEN c.status = 'VERIFIED_AND_PAID' THEN c.entry_fee ELSE 0 END) as collectedAmount
       FROM lucky_draw_coupons c
       LEFT JOIN staff_users s ON (c.staff_id = s.employee_id OR c.staff_name = s.full_name)
-      ${eventFilter}
+      ${fullFilter}
       GROUP BY c.staff_name, c.staff_id, s.branch_location
       ORDER BY totalEntered DESC
-    `, params);
+    `, allParams);
 
     // 3. Branch-wise Breakdown
     const [branchBreakdown] = await pool.query(`
@@ -1958,10 +2069,10 @@ async function getCouponReports(req, res, next) {
         SUM(CASE WHEN c.status = 'VERIFIED_AND_PAID' THEN c.entry_fee ELSE 0 END) as collectedAmount
       FROM lucky_draw_coupons c
       LEFT JOIN staff_users s ON (c.staff_id = s.employee_id OR c.staff_name = s.full_name)
-      ${eventFilter}
+      ${fullFilter}
       GROUP BY s.branch_location
       ORDER BY totalCoupons DESC
-    `, params);
+    `, allParams);
 
     // 4. Seasons / Months List
     let seasons = [];
