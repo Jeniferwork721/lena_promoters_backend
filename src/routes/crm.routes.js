@@ -11,6 +11,7 @@ const crmReport = require('../controllers/crmReport.controller');
 const crmDashboard = require('../controllers/crmDashboard.controller');
 const crmConfig = require('../controllers/crmConfig.controller');
 const crmCallLog = require('../controllers/crmCallLog.controller');
+const crmGreetings = require('../controllers/crmGreetings.controller');
 const authController = require('../controllers/auth.controller');
 
 // All CRM endpoints require staff token authentication
@@ -97,5 +98,12 @@ router.post('/call-logs/sync', crmCallLog.syncCallLogs);
 router.get('/call-logs', crmCallLog.getCallLogs);
 router.patch('/call-logs/:id/mark-logged', crmCallLog.markCallLogLogged);
 router.delete('/call-logs/clear-old', requireMD, crmCallLog.clearOldCallLogs);
+
+// ==========================================================
+// 12. AUTOMATED BIRTHDAY & ANNIVERSARY GREETINGS
+// ==========================================================
+router.get('/greetings/today', crmGreetings.getTodayCelebrations);
+router.post('/greetings/trigger', requireMD, crmGreetings.triggerDailyGreetings);
+router.post('/greetings/send-single', requireMD, crmGreetings.sendSingleGreeting);
 
 module.exports = router;

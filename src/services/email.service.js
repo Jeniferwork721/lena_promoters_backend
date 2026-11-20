@@ -244,6 +244,7 @@ async function sendStaffWelcomeEmail(toEmail, fullName, temporaryPassword = 'Len
 }
 
 module.exports = {
+  getTransporter,
   sendEmailOtp,
   sendStaffWelcomeEmail,
 };

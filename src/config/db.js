@@ -1075,6 +1075,28 @@ async function initializeDatabase() {
     `);
     console.log('🖼️ Verified daily_posts table in DB');
 
+    // 18. Automated Greeting Logs Table (Tracks automated Birthday & Anniversary wishes)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`automated_greeting_logs\` (
+        \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
+        \`recipient_type\` ENUM('CUSTOMER', 'STAFF') NOT NULL,
+        \`recipient_id\` INT NOT NULL,
+        \`recipient_name\` VARCHAR(150) NOT NULL,
+        \`recipient_email\` VARCHAR(150) NOT NULL,
+        \`greeting_type\` ENUM('BIRTHDAY', 'ANNIVERSARY') NOT NULL,
+        \`event_date\` VARCHAR(20) NOT NULL,
+        \`sent_year\` INT NOT NULL,
+        \`status\` VARCHAR(30) NOT NULL DEFAULT 'SENT',
+        \`message_id\` VARCHAR(150) NULL,
+        \`error_message\` TEXT NULL,
+        \`sent_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY \`uq_recipient_event_year\` (\`recipient_type\`, \`recipient_id\`, \`greeting_type\`, \`sent_year\`),
+        INDEX \`idx_greeting_lookup\` (\`recipient_type\`, \`event_date\`),
+        INDEX \`idx_sent_year\` (\`sent_year\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    console.log('🎉 Verified automated_greeting_logs table in DB');
+
     // Ensure call_log_tracking_since column exists on staff_users (upcoming-only call log anchor timestamp)
     try {
       const [trackingCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'call_log_tracking_since'");

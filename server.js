@@ -7,6 +7,7 @@ const path = require('path');
 const routes = require('./src/routes');
 const errorHandler = require('./src/middlewares/errorHandler');
 const { initializeDatabase } = require('./src/config/db');
+const { initGreetingsScheduler } = require('./src/services/greetings.service');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -59,4 +60,7 @@ app.listen(PORT, async () => {
   
   // Initialize Database Tables and Seeds
   await initializeDatabase();
+
+  // Initialize Daily Automated Greetings Scheduler (08:00 AM IST)
+  initGreetingsScheduler();
 });
