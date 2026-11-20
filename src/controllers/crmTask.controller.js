@@ -6,8 +6,12 @@ const { pool } = require('../config/db');
  */
 async function getTasks(req, res, next) {
   try {
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
-    const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff?.permissions || '[]') : []);
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HR'].includes(roleUpper) || perms.includes('*');
+    const isLead = !isMD && ['MANAGER', 'LEAD', 'TEAM_LEAD', 'SALES_HEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -133,7 +137,11 @@ async function getTasks(req, res, next) {
 async function createTask(req, res, next) {
   try {
     const callerId = req.staff?.id;
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff?.permissions || '[]') : []);
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HR'].includes(roleUpper) || perms.includes('*');
     const { title, desc, employeeId, priority = 'Medium', due } = req.body;
 
     if (!title || !title.trim()) {
@@ -222,12 +230,16 @@ async function updateTaskStatus(req, res, next) {
     const taskId = req.params.id;
     const { status } = req.body;
     const callerId = String(req.staff?.id || '');
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff?.permissions || '[]') : []);
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HR'].includes(roleUpper) || perms.includes('*');
 
-    if (!status || !['Pending', 'Ongoing', 'Completed'].includes(status)) {
+    if (!status || !['Pending', 'Ongoing', 'In Progress', 'Completed'].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Status must be one of: Pending, Ongoing, Completed.',
+        message: 'Status must be one of: Pending, Ongoing, In Progress, Completed.',
       });
     }
 

@@ -2081,11 +2081,23 @@ async function getCouponReports(req, res, next) {
       seasons = allSeasons;
     } catch (_) {}
 
+    const formattedStaffBreakdown = staffBreakdown.map((sb) => ({
+      ...sb,
+      entries: Number(sb.totalEntered || 0),
+      amount: Number(sb.collectedAmount || 0),
+    }));
+
+    const formattedBranchBreakdown = branchBreakdown.map((bb) => ({
+      ...bb,
+      entries: Number(bb.totalCoupons || 0),
+      amount: Number(bb.collectedAmount || 0),
+    }));
+
     return res.status(200).json({
       success: true,
       summary,
-      staffBreakdown,
-      branchBreakdown,
+      staffBreakdown: formattedStaffBreakdown,
+      branchBreakdown: formattedBranchBreakdown,
       seasons: seasons.map(s => ({
         id: s.id,
         eventCode: s.event_code,

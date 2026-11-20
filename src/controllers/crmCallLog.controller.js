@@ -460,7 +460,13 @@ async function getCallLogs(req, res, next) {
          ${staffFilterWhere}
          ORDER BY name ASC`
       );
-      staffList = sRows.map((r) => ({ id: String(r.id), name: r.name || 'Staff', employeeId: r.employeeId || '' }));
+      staffList = sRows.map((r) => ({
+        id: String(r.id),
+        staffId: r.employeeId || String(r.id),
+        employeeId: r.employeeId || '',
+        name: r.name || 'Staff',
+        staffName: r.name || 'Staff',
+      }));
     }
 
     return res.status(200).json({
@@ -481,12 +487,18 @@ async function getCallLogs(req, res, next) {
         branch: r.branch || '',
         department: r.department || '',
         designation: r.designation || '',
+        phone: r.phoneNumber,
         phoneNumber: r.phoneNumber,
         contactName: r.contactName || '',
+        type: String(r.callType || 'unknown').toLowerCase(),
         callType: r.callType || 'UNKNOWN',
+        duration: Number(r.durationSeconds || 0),
         durationSeconds: Number(r.durationSeconds || 0),
+        calledAt: r.callTimestamp,
         callTimestamp: r.callTimestamp,
+        logged: Boolean(r.isAddedToEntry),
         isAddedToEntry: Boolean(r.isAddedToEntry),
+        reportId: r.crmReportId || null,
         crmReportId: r.crmReportId || null,
         syncedAt: r.syncedAt,
       })),

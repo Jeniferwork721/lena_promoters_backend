@@ -95,6 +95,7 @@ async function updateConfigOptionList(req, res, next) {
         list: listName,
         values: cleanValues,
       },
+      values: cleanValues,
     });
   } catch (err) {
     next(err);

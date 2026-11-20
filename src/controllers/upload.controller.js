@@ -16,7 +16,7 @@ async function uploadReceipt(req, res, next) {
     const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
     const fileUrl = `${baseUrl}/uploads/receipts/${file.filename}`;
 
-    return res.status(200).json({
+    return res.status(201).json({
       success: true,
       message: 'Receipt uploaded successfully',
       file: {

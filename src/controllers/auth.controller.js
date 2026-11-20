@@ -1950,26 +1950,31 @@ async function changePassword(req, res, next) {
  */
 async function deleteStaffAccount(req, res, next) {
   try {
-    const staffId = req.params.staffId;
+    const staffId = req.params.staffId || req.params.id;
     if (!staffId) {
       return res.status(400).json({ success: false, message: 'Staff ID is required.' });
     }
 
-    const [rows] = await pool.query('SELECT id, full_name FROM staff_users WHERE id = ? LIMIT 1', [staffId]);
+    const [rows] = await pool.query('SELECT id, full_name FROM staff_users WHERE id = ? OR employee_id = ? LIMIT 1', [staffId, staffId]);
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Staff member not found.' });
     }
 
+    const targetId = rows[0].id;
     await pool.query(
       `UPDATE staff_users 
        SET password_hash = '', plain_password = NULL, must_change_password = 1 
        WHERE id = ?`,
-      [staffId]
+      [targetId]
     );
 
     return res.status(200).json({
       success: true,
-      message: `Login account for ${rows[0].full_name} removed. Work reports, tasks, and leads have been preserved.`,
+      message: `Account removed`,
+      data: {
+        id: String(targetId),
+        name: rows[0].full_name,
+      },
     });
   } catch (err) {
     next(err);

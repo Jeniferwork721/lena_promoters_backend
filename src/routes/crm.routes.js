@@ -11,6 +11,7 @@ const crmReport = require('../controllers/crmReport.controller');
 const crmDashboard = require('../controllers/crmDashboard.controller');
 const crmConfig = require('../controllers/crmConfig.controller');
 const crmCallLog = require('../controllers/crmCallLog.controller');
+const authController = require('../controllers/auth.controller');
 
 // All CRM endpoints require staff token authentication
 router.use(verifyStaffToken);
@@ -32,6 +33,7 @@ router.get('/employees/:id', crmEmployee.getEmployeeById);
 router.put('/employees/:id', requireMD, crmEmployee.updateEmployee);
 router.patch('/employees/:id/assignment', requireMD, crmEmployee.updateEmployeeAssignment);
 router.delete('/employees/:id', requireMD, crmEmployee.deleteEmployee);
+router.delete('/staff/:staffId/account', requireMD, authController.deleteStaffAccount);
 
 // ==========================================================
 // 5. CUSTOMER LEADS (Section 5: #20 to #25)
