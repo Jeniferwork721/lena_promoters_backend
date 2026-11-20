@@ -40,26 +40,19 @@ app.use(express.urlencoded({ extended: true }));
 // Serve uploaded media statically (Receipts, Property Photos)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Mount API routes under /api/v1 as well as root level for frontend compatibility
-app.use('/api/v1', routes);
-app.use('/', routes);
-
-// Root Welcome Route
+// Public Health Check Route
 app.get('/health-check', (req, res) => {
   res.json({
     status: 'online',
-    project: 'Lena Promoters Mobile App Backend',
+    project: 'Lena Promoters Backend API',
     version: '1.0.0',
     documentation: '/api/v1/health',
-    endpoints: {
-      auth: '/api/v1/auth',
-      properties: '/api/v1/properties',
-      coupons: '/api/v1/coupons',
-      siteVisits: '/api/v1/site-visits',
-      uploads: '/api/v1/uploads',
-    },
   });
 });
+
+// Mount API routes under /api/v1 as well as root level for frontend compatibility
+app.use('/api/v1', routes);
+app.use('/', routes);
 
 // 404 Handler
 app.use((req, res) => {
