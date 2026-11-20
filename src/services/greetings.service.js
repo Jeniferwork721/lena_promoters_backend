@@ -1,4 +1,10 @@
-const cron = require('node-cron');
+let cron;
+try {
+  cron = require('node-cron');
+} catch (e) {
+  cron = null;
+  console.warn('⚠️ [Greetings Scheduler] node-cron package not found. Using timer fallback.');
+}
 const { pool } = require('../config/db');
 const { getTransporter } = require('./email.service');
 
@@ -645,19 +651,32 @@ async function getTodayCelebrations() {
  * Initializes the automated daily scheduler at 08:00 AM IST.
  */
 function initGreetingsScheduler() {
-  // Cron expression: 0 8 * * * = Every day at 08:00 AM
-  cron.schedule(
-    '0 8 * * *',
-    async () => {
-      console.log('⏰ [Daily Greetings Scheduler] Triggering 08:00 AM IST automated wish dispatch...');
-      await processDailyGreetings();
-    },
-    {
-      timezone: 'Asia/Kolkata',
-    }
-  );
-
-  console.log('📅 [Greetings Scheduler] Daily birthday & anniversary wish scheduler active (08:00 AM IST)');
+  if (cron) {
+    // Cron expression: 0 8 * * * = Every day at 08:00 AM
+    cron.schedule(
+      '0 8 * * *',
+      async () => {
+        console.log('⏰ [Daily Greetings Scheduler] Triggering 08:00 AM IST automated wish dispatch...');
+        await processDailyGreetings();
+      },
+      {
+        timezone: 'Asia/Kolkata',
+      }
+    );
+    console.log('📅 [Greetings Scheduler] Daily birthday & anniversary wish scheduler active (08:00 AM IST)');
+  } else {
+    // Fallback: check every 30 minutes if it is 8:00 AM IST
+    setInterval(async () => {
+      const now = new Date();
+      // IST is UTC+5:30
+      const istHours = (now.getUTCHours() + 5 + Math.floor((now.getUTCMinutes() + 30) / 60)) % 24;
+      const istMins = (now.getUTCMinutes() + 30) % 60;
+      if (istHours === 8 && istMins < 30) {
+        await processDailyGreetings();
+      }
+    }, 30 * 60 * 1000);
+    console.log('📅 [Greetings Scheduler] Daily birthday & anniversary wish timer active (timer fallback)');
+  }
 }
 
 module.exports = {
