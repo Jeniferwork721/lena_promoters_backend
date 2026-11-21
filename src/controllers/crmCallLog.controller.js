@@ -319,23 +319,39 @@ async function getCallLogs(req, res, next) {
   try {
     await ensureCallLogsTable();
 
+    const callerId = req.staff?.id;
+    if (!callerId) {
+      return res.status(401).json({ success: false, message: 'Staff authentication required.' });
+    }
+
     const roleUpper = (req.staff?.role || '').toUpperCase();
     const perms = Array.isArray(req.staff?.permissions)
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
     const d = (req.staff?.designation || '').toUpperCase();
     const dept = (req.staff?.department || '').toUpperCase();
-    const isManager = d.includes('MANAGER') || dept.includes('MANAGEMENT');
 
-    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper) ||
+    // Sales staff / executive check (BDM, BDE, Telecaller, Sales Executive are single employees under lead, NOT management)
+    const isSalesStaff = d.includes('BDM') || d.includes('BDE') || d.includes('BUSINESS DEVELOPMENT') || d.includes('TELECALLER') || roleUpper === 'EMPLOYEE' || roleUpper === 'SALES_EXECUTIVE';
+
+    // Management designation (e.g. Finance & Loan Manager, Accounts & Finance Management, GM)
+    const isManager = !isSalesStaff && (d.includes('MANAGER') || dept.includes('MANAGEMENT'));
+
+    // Company-wide Management access (MD, HR, Sales Head, General Manager, non-sales Manager, or explicit oversight permissions)
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER'].includes(roleUpper) ||
       perms.includes('*') ||
-      perms.includes('call_logs') ||
+      perms.includes('call_logs_all') ||
+      perms.includes('reports_all') ||
       perms.includes('reports_employee') ||
       perms.includes('reports_team') ||
-      perms.includes('reports') ||
+      perms.includes('employees_manage') ||
       isManager;
-    const isLead = !isMD && ['TEAM_LEAD', 'LEAD', 'MANAGER'].includes(roleUpper);
-    const callerId = req.staff?.id;
+
+    // Team lead (sees own team members + self)
+    const isLead = !isMD && !isSalesStaff && ['TEAM_LEAD', 'LEAD'].includes(roleUpper);
+
+    // Single individual employee (ONLY ever sees their own call logs)
+    const isSingleEmployee = !isMD && !isLead;
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '100', 10)));
@@ -347,7 +363,8 @@ async function getCallLogs(req, res, next) {
     const baseParams = [];
 
     // Role scoping
-    if (mineOnly === 'true' || mineOnly === true || (!isMD && !isLead)) {
+    if (isSingleEmployee || mineOnly === 'true' || mineOnly === true) {
+      // Single employee ALWAYS only sees their own call logs
       baseWhere.push('cl.staff_id = ?');
       baseParams.push(callerId);
     } else if (isLead && !isMD) {
