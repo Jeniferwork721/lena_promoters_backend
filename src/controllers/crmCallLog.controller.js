@@ -320,7 +320,20 @@ async function getCallLogs(req, res, next) {
     await ensureCallLogsTable();
 
     const roleUpper = (req.staff?.role || '').toUpperCase();
-    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const d = (req.staff?.designation || '').toUpperCase();
+    const dept = (req.staff?.department || '').toUpperCase();
+    const isManager = d.includes('MANAGER') || dept.includes('MANAGEMENT');
+
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper) ||
+      perms.includes('*') ||
+      perms.includes('call_logs') ||
+      perms.includes('reports_employee') ||
+      perms.includes('reports_team') ||
+      perms.includes('reports') ||
+      isManager;
     const isLead = !isMD && ['TEAM_LEAD', 'LEAD', 'MANAGER'].includes(roleUpper);
     const callerId = req.staff?.id;
 

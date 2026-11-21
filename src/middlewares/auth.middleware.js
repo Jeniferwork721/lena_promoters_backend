@@ -38,14 +38,24 @@ function verifyStaffToken(req, res, next) {
 /**
  * Helper to determine user's app role: 'MD' | 'lead' | 'employee' | 'coupon_head' | 'hr'
  */
-function getAppRole(role) {
-  if (!role) return 'employee';
-  const r = role.toUpperCase();
-  if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD' || r === 'GENERAL_MANAGER' || r === 'OVERALL_MANAGER') return 'MD';
+function getAppRole(role, designation, department, permissions) {
+  if (!role && !designation && !department) return 'employee';
+  const r = (role || '').toUpperCase();
+  const d = (designation || '').toUpperCase();
+  const dept = (department || '').toUpperCase();
+  const perms = Array.isArray(permissions) ? permissions : (typeof permissions === 'string' ? JSON.parse(permissions || '[]') : []);
+
+  if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD' || r === 'GENERAL_MANAGER' || r === 'OVERALL_MANAGER' || d.includes('GENERAL MANAGER') || d.includes('MANAGING DIRECTOR')) return 'MD';
   if (r === 'SALES_HEAD' || r === 'HEAD_MANAGER' || r === 'SALES_MANAGER') return 'sales_head';
-  if (r === 'MANAGER' || r === 'LEAD' || r === 'TEAM_LEAD') return 'lead';
   if (r === 'COUPON_HEAD' || r === 'COUPON_MANAGER') return 'coupon_head';
   if (r === 'HR' || r === 'HUMAN_RESOURCES') return 'hr';
+  if (r === 'MANAGER' || r === 'LEAD' || r === 'TEAM_LEAD') return 'lead';
+
+  // Management position / Department or reporting authority
+  if (dept.includes('MANAGEMENT') || d.includes('MANAGER') || perms.includes('*') || perms.includes('employees_manage')) {
+    return 'sales_head';
+  }
+
   return 'employee';
 }
 
@@ -59,15 +69,19 @@ function requireMD(req, res, next) {
       message: 'Authentication required.',
     });
   }
-  const appRole = getAppRole(req.staff.role);
+  const appRole = getAppRole(req.staff.role, req.staff.designation, req.staff.department, req.staff.permissions);
   const r = (req.staff.role || '').toUpperCase();
   const d = (req.staff.designation || '').toUpperCase();
+  const dept = (req.staff.department || '').toUpperCase();
   const perms = Array.isArray(req.staff.permissions)
     ? req.staff.permissions
     : (typeof req.staff.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
 
   const isExecutiveAdmin =
     appRole === 'MD' ||
+    r === 'ADMIN' ||
+    r === 'SUPER_ADMIN' ||
+    r === 'MD' ||
     r === 'GENERAL_MANAGER' ||
     r === 'OVERALL_MANAGER' ||
     d.includes('GENERAL MANAGER') ||
@@ -75,7 +89,20 @@ function requireMD(req, res, next) {
     perms.includes('*') ||
     perms.includes('employees_manage');
 
-  if (!isExecutiveAdmin) {
+  // Allow read-only access for staff with report/team permissions or management positions
+  const isReadOnly = req.method === 'GET';
+  const hasManagementReadAccess = isReadOnly && (
+    perms.includes('reports_team') ||
+    perms.includes('reports_employee') ||
+    perms.includes('reports') ||
+    perms.includes('reports_all') ||
+    perms.includes('assign_leads') ||
+    d.includes('MANAGER') ||
+    dept.includes('MANAGEMENT') ||
+    dept.includes('FINANCE')
+  );
+
+  if (!isExecutiveAdmin && !hasManagementReadAccess) {
     return res.status(403).json({
       success: false,
       message: 'Forbidden. Managing Director / General Manager privileges required for this action.',
@@ -94,8 +121,23 @@ function requireLeadOrMD(req, res, next) {
       message: 'Authentication required.',
     });
   }
-  const appRole = getAppRole(req.staff.role);
-  if (appRole !== 'MD' && appRole !== 'sales_head' && appRole !== 'lead') {
+  const appRole = getAppRole(req.staff.role, req.staff.designation, req.staff.department, req.staff.permissions);
+  const d = (req.staff.designation || '').toUpperCase();
+  const perms = Array.isArray(req.staff.permissions)
+    ? req.staff.permissions
+    : (typeof req.staff.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+
+  const hasAccess =
+    appRole === 'MD' ||
+    appRole === 'sales_head' ||
+    appRole === 'lead' ||
+    perms.includes('*') ||
+    perms.includes('reports_team') ||
+    perms.includes('reports_employee') ||
+    perms.includes('reports') ||
+    d.includes('MANAGER');
+
+  if (!hasAccess) {
     return res.status(403).json({
       success: false,
       message: 'Forbidden. Leadership or Admin privileges required for this action.',
