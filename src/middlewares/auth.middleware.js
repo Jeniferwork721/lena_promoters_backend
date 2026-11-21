@@ -51,8 +51,9 @@ function getAppRole(role, designation, department, permissions) {
   if (r === 'HR' || r === 'HUMAN_RESOURCES') return 'hr';
   if (r === 'MANAGER' || r === 'LEAD' || r === 'TEAM_LEAD') return 'lead';
 
-  // Management position / Department or reporting authority
-  if (dept.includes('MANAGEMENT') || d.includes('MANAGER') || perms.includes('*') || perms.includes('employees_manage')) {
+  // Management position / Department or reporting authority (exclude sales staff like BDM / BDE / Telecaller)
+  const isSalesStaff = d.includes('BDM') || d.includes('BDE') || d.includes('BUSINESS DEVELOPMENT') || d.includes('TELECALLER');
+  if (!isSalesStaff && (dept.includes('MANAGEMENT') || d.includes('MANAGER') || perms.includes('*') || perms.includes('employees_manage'))) {
     return 'sales_head';
   }
 
