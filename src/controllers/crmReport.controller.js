@@ -227,6 +227,27 @@ async function createReport(req, res, next) {
 
     const reportId = insertResult.insertId;
 
+    // Automatically mark matching synced call log as added to CRM call entry
+    const callLogId = req.body.callLogId;
+    if (callLogId) {
+      try {
+        await pool.query(
+          'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = ? WHERE id = ?',
+          [`rep_${reportId}`, callLogId]
+        );
+      } catch (_) {}
+    } else if (cleanContact && employeeId) {
+      try {
+        const last10 = cleanContact.replace(/[^0-9]/g, '').slice(-10);
+        if (last10.length >= 10) {
+          await pool.query(
+            'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = ? WHERE staff_id = ? AND (phone_number LIKE ? OR phone_number = ?) AND is_added_to_entry = 0 ORDER BY call_timestamp DESC LIMIT 1',
+            [`rep_${reportId}`, employeeId, `%${last10}`, cleanContact]
+          );
+        }
+      } catch (_) {}
+    }
+
     return res.status(201).json({
       success: true,
       message: 'Call report created successfully',
@@ -879,6 +900,16 @@ async function updateReport(req, res, next) {
     if (updates.length > 0) {
       values.push(reportId);
       await pool.query(`UPDATE work_reports SET ${updates.join(', ')} WHERE id = ?`, values);
+    }
+
+    const callLogId = req.body?.callLogId;
+    if (callLogId) {
+      try {
+        await pool.query(
+          'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = ? WHERE id = ?',
+          [`rep_${reportId}`, callLogId]
+        );
+      } catch (_) {}
     }
 
     const [updatedRows] = await pool.query(
