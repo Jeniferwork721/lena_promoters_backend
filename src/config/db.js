@@ -881,6 +881,7 @@ async function initializeDatabase() {
         { name: 'ifsc_code', type: 'VARCHAR(25) NULL' },
         { name: 'profile_pic', type: 'TEXT NULL' },
         { name: 'address', type: 'TEXT NULL' },
+        { name: 'blood_group', type: 'VARCHAR(20) NULL' },
         { name: 'marital_status', type: 'VARCHAR(50) NULL' },
         { name: 'marriage_date', type: 'DATE NULL' },
         { name: 'parents', type: 'JSON NULL' },
