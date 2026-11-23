@@ -329,30 +329,18 @@ async function getCallLogs(req, res, next) {
     const perms = Array.isArray(req.staff?.permissions)
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
-    const d = (req.staff?.designation || '').toUpperCase();
-    const dept = (req.staff?.department || '').toUpperCase();
-
-    // Sales staff / executive check (BDM, BDE, Telecaller, Sales Executive are single employees under lead, NOT management)
-    const isSalesStaff = d.includes('BDM') || d.includes('BDE') || d.includes('BUSINESS DEVELOPMENT') || d.includes('TELECALLER') || roleUpper === 'EMPLOYEE' || roleUpper === 'SALES_EXECUTIVE';
-
-    // Management designation (e.g. Finance & Loan Manager, Accounts & Finance Management, GM)
-    const isManager = !isSalesStaff && (d.includes('MANAGER') || dept.includes('MANAGEMENT'));
-
-    // Company-wide Management access (MD, HR, Sales Head, General Manager, non-sales Manager, or explicit oversight permissions)
-    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER'].includes(roleUpper) ||
+    // Company-wide Call Logs oversight: strictly MD, HR, or explicit all-staff oversight permissions
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(roleUpper) ||
       perms.includes('*') ||
       perms.includes('call_logs_all') ||
       perms.includes('reports_all') ||
-      perms.includes('reports_employee') ||
-      perms.includes('reports_team') ||
-      perms.includes('employees_manage') ||
-      isManager;
+      perms.includes('reports_employee');
 
     const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
     const hasManagedTeams = managedTeamIds.length > 0;
 
     // Team lead (sees own team members + self)
-    const isLead = !isMD && !isSalesStaff && ['TEAM_LEAD', 'LEAD'].includes(roleUpper);
+    const isLead = !isMD && ['TEAM_LEAD', 'LEAD'].includes(roleUpper);
 
     // Single individual employee (ONLY ever sees their own call logs)
     const isSingleEmployee = !isMD && !isLead && !hasManagedTeams;

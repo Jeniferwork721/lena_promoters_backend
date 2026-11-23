@@ -134,7 +134,7 @@ async function createLayout(req, res, next) {
     const perms = Array.isArray(staff?.permissions)
       ? staff.permissions
       : (typeof staff?.permissions === 'string' ? JSON.parse(staff.permissions || '[]') : []);
-    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER', 'MANAGER'];
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD'];
     const canManageLayouts = allowedRoles.includes((staff?.role || '').toUpperCase()) || perms.includes('*') || perms.includes('layouts');
     if (staff && !canManageLayouts) {
       return res.status(403).json({
@@ -263,7 +263,7 @@ async function updateLayout(req, res, next) {
     const perms = Array.isArray(staff?.permissions)
       ? staff.permissions
       : (typeof staff?.permissions === 'string' ? JSON.parse(staff.permissions || '[]') : []);
-    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER', 'MANAGER'];
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD'];
     const canManageLayouts = allowedRoles.includes((staff?.role || '').toUpperCase()) || perms.includes('*') || perms.includes('layouts');
     if (staff && !canManageLayouts) {
       return res.status(403).json({
@@ -402,7 +402,7 @@ async function deleteLayout(req, res, next) {
     const perms = Array.isArray(staff?.permissions)
       ? staff.permissions
       : (typeof staff?.permissions === 'string' ? JSON.parse(staff.permissions || '[]') : []);
-    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER', 'MANAGER'];
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD'];
     const canManageLayouts = allowedRoles.includes((staff?.role || '').toUpperCase()) || perms.includes('*') || perms.includes('layouts');
     if (staff && !canManageLayouts) {
       return res.status(403).json({

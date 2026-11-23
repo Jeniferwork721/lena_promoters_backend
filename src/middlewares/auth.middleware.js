@@ -41,21 +41,12 @@ function verifyStaffToken(req, res, next) {
 function getAppRole(role, designation, department, permissions) {
   if (!role && !designation && !department) return 'employee';
   const r = (role || '').toUpperCase();
-  const d = (designation || '').toUpperCase();
-  const dept = (department || '').toUpperCase();
   const perms = Array.isArray(permissions) ? permissions : (typeof permissions === 'string' ? JSON.parse(permissions || '[]') : []);
 
-  if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD' || r === 'GENERAL_MANAGER' || r === 'OVERALL_MANAGER' || d.includes('GENERAL MANAGER') || d.includes('MANAGING DIRECTOR')) return 'MD';
-  if (r === 'SALES_HEAD' || r === 'HEAD_MANAGER' || r === 'SALES_MANAGER') return 'sales_head';
-  if (r === 'COUPON_HEAD' || r === 'COUPON_MANAGER') return 'coupon_head';
-  if (r === 'HR' || r === 'HUMAN_RESOURCES') return 'hr';
-  if (r === 'MANAGER' || r === 'LEAD' || r === 'TEAM_LEAD') return 'lead';
-
-  // Management position / Department or reporting authority (exclude sales staff like BDM / BDE / Telecaller)
-  const isSalesStaff = d.includes('BDM') || d.includes('BDE') || d.includes('BUSINESS DEVELOPMENT') || d.includes('TELECALLER');
-  if (!isSalesStaff && (dept.includes('MANAGEMENT') || d.includes('MANAGER') || perms.includes('*') || perms.includes('employees_manage'))) {
-    return 'sales_head';
-  }
+  if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD' || perms.includes('*')) return 'MD';
+  if (r === 'COUPON_HEAD') return 'coupon_head';
+  if (r === 'HR') return 'hr';
+  if (r === 'LEAD' || r === 'TEAM_LEAD') return 'lead';
 
   return 'employee';
 }
@@ -72,8 +63,6 @@ function requireMD(req, res, next) {
   }
   const appRole = getAppRole(req.staff.role, req.staff.designation, req.staff.department, req.staff.permissions);
   const r = (req.staff.role || '').toUpperCase();
-  const d = (req.staff.designation || '').toUpperCase();
-  const dept = (req.staff.department || '').toUpperCase();
   const perms = Array.isArray(req.staff.permissions)
     ? req.staff.permissions
     : (typeof req.staff.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
@@ -83,30 +72,23 @@ function requireMD(req, res, next) {
     r === 'ADMIN' ||
     r === 'SUPER_ADMIN' ||
     r === 'MD' ||
-    r === 'GENERAL_MANAGER' ||
-    r === 'OVERALL_MANAGER' ||
-    d.includes('GENERAL MANAGER') ||
-    d.includes('MANAGING DIRECTOR') ||
     perms.includes('*') ||
     perms.includes('employees_manage');
 
-  // Allow read-only access for staff with report/team permissions or management positions
+  // Allow read-only access for staff with report/team permissions
   const isReadOnly = req.method === 'GET';
   const hasManagementReadAccess = isReadOnly && (
     perms.includes('reports_team') ||
     perms.includes('reports_employee') ||
     perms.includes('reports') ||
     perms.includes('reports_all') ||
-    perms.includes('assign_leads') ||
-    d.includes('MANAGER') ||
-    dept.includes('MANAGEMENT') ||
-    dept.includes('FINANCE')
+    perms.includes('assign_leads')
   );
 
   if (!isExecutiveAdmin && !hasManagementReadAccess) {
     return res.status(403).json({
       success: false,
-      message: 'Forbidden. Managing Director / General Manager privileges required for this action.',
+      message: 'Forbidden. Managing Director privileges required for this action.',
     });
   }
   next();
@@ -123,20 +105,19 @@ function requireLeadOrMD(req, res, next) {
     });
   }
   const appRole = getAppRole(req.staff.role, req.staff.designation, req.staff.department, req.staff.permissions);
-  const d = (req.staff.designation || '').toUpperCase();
   const perms = Array.isArray(req.staff.permissions)
     ? req.staff.permissions
     : (typeof req.staff.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
 
+  const hasManagedTeams = Array.isArray(req.staff.managed_teams) && req.staff.managed_teams.length > 0;
   const hasAccess =
     appRole === 'MD' ||
-    appRole === 'sales_head' ||
     appRole === 'lead' ||
+    hasManagedTeams ||
     perms.includes('*') ||
     perms.includes('reports_team') ||
     perms.includes('reports_employee') ||
-    perms.includes('reports') ||
-    d.includes('MANAGER');
+    perms.includes('reports');
 
   if (!hasAccess) {
     return res.status(403).json({

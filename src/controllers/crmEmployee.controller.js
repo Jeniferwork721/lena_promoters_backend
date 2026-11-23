@@ -24,20 +24,15 @@ async function getEmployees(req, res, next) {
     const perms = Array.isArray(req.staff?.permissions)
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
-    const d = (req.staff?.designation || '').toUpperCase();
-    const dept = (req.staff?.department || '').toUpperCase();
-    const isManager = d.includes('MANAGER') || dept.includes('MANAGEMENT');
-
+    const roleUpper = (req.staff?.role || '').toUpperCase();
     const isMD = req.staff && (
-      ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'OVERALL_MANAGER'].includes((req.staff.role || '').toUpperCase()) ||
+      ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(roleUpper) ||
       perms.includes('*') ||
       perms.includes('employees_manage') ||
       perms.includes('reports_employee') ||
-      perms.includes('reports_team') ||
-      perms.includes('reports') ||
-      isManager
+      perms.includes('reports_all')
     );
-    const isLead = !isMD && req.staff && (['MANAGER', 'LEAD', 'TEAM_LEAD'].includes((req.staff.role || '').toUpperCase()) || perms.includes('reports_own_team'));
+    const isLead = !isMD && req.staff && (['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team'));
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10)));

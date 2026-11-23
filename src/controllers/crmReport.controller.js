@@ -409,8 +409,11 @@ async function getReports(req, res, next) {
       return getReportByContact(req, res, next);
     }
     const roleUpper = (req.staff?.role || '').toUpperCase();
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
-    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const isMD = req.staff && (['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*'));
+    const isLead = !isMD && req.staff && ['LEAD', 'TEAM_LEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -437,10 +440,7 @@ async function getReports(req, res, next) {
     let whereConditions = ['1=1'];
     let params = [];
 
-    const perms = Array.isArray(req.staff?.permissions)
-      ? req.staff.permissions
-      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
-    const hasAllReports = isMD || perms.includes('*') || perms.includes('reports_team') || perms.includes('reports_employee');
+    const hasAllReports = isMD || perms.includes('reports_employee') || perms.includes('reports_all');
     const hasOwnTeamReport = isLead || perms.includes('reports_own_team');
 
     // Role-based scoping
@@ -679,9 +679,14 @@ async function getReportById(req, res, next) {
     const rawId = req.params.id;
     const reportId = String(rawId).replace(/^rep_/, '');
     const roleUpper = (req.staff?.role || '').toUpperCase();
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
-    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const isMD = req.staff && (['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*'));
+    const isLead = !isMD && req.staff && ['LEAD', 'TEAM_LEAD'].includes(roleUpper);
+    const hasAllReports = isMD || perms.includes('reports_employee') || perms.includes('reports_all');
     const callerId = String(req.staff?.id || '');
+    const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
 
     const [rows] = await pool.query(`
       SELECT 
@@ -704,10 +709,11 @@ async function getReportById(req, res, next) {
     const r = rows[0];
 
     // Scoping check
-    if (!isMD) {
-      if (isLead && String(r.leadId) !== callerId && String(r.employee_id) !== callerId) {
-        return res.status(403).json({ success: false, message: 'Access denied to this report.' });
-      } else if (!isLead && String(r.employee_id) !== callerId) {
+    if (!hasAllReports) {
+      const isManagerOfTeam = r.teamId && managedTeamIds.includes(Number(r.teamId));
+      const isLeadOfTeam = isLead && String(r.leadId) === callerId;
+      const isSelf = String(r.employee_id) === callerId;
+      if (!isManagerOfTeam && !isLeadOfTeam && !isSelf) {
         return res.status(403).json({ success: false, message: 'Access denied to this report.' });
       }
     }
@@ -972,9 +978,14 @@ async function getDailyRegister(req, res, next) {
     const queryDate = req.query.date ? req.query.date.trim() : new Date().toISOString().split('T')[0];
     const employeeIdFilter = req.query.employeeId ? req.query.employeeId.trim() : null;
     const roleUpper = (req.staff?.role || '').toUpperCase();
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
-    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const isMD = req.staff && (['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*'));
+    const isLead = !isMD && req.staff && ['LEAD', 'TEAM_LEAD'].includes(roleUpper);
+    const hasAllReports = isMD || perms.includes('reports_employee') || perms.includes('reports_all');
     const callerId = req.staff?.id;
+    const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
 
     let whereConditions = ['wr.report_date = ?'];
     let params = [queryDate];
@@ -997,7 +1008,28 @@ async function getDailyRegister(req, res, next) {
         employeeName = stRows[0].full_name;
         teamName = stRows[0].team_name || 'Lena Promoters';
       }
-    } else if (!isMD && !isLead) {
+    } else if (hasAllReports) {
+      // Company-wide: all calls
+      employeeName = 'All Staff';
+      teamName = 'Company Overview';
+    } else if (managedTeamIds.length > 0) {
+      // Multi-team manager
+      whereConditions.push('(s.team_id IN (?) OR wr.employee_id = ?)');
+      params.push(managedTeamIds, callerId);
+      employeeName = req.staff.fullName || req.staff.full_name || req.staff.name || 'Manager';
+      teamName = `${managedTeamIds.length} Managed Teams`;
+    } else if (isLead || perms.includes('reports_own_team')) {
+      // Team lead: filter to own team
+      const leadTeamId = req.staff.teamId || req.staff.team_id;
+      if (leadTeamId) {
+        whereConditions.push('(s.team_id = ? OR wr.employee_id = ?)');
+        params.push(leadTeamId, callerId);
+      } else {
+        whereConditions.push('wr.employee_id = ?');
+        params.push(callerId);
+      }
+      employeeName = req.staff.fullName || req.staff.full_name || req.staff.name || 'Team Lead';
+    } else {
       // Regular telecaller: filter to own calls
       whereConditions.push('wr.employee_id = ?');
       params.push(callerId);
@@ -1006,14 +1038,6 @@ async function getDailyRegister(req, res, next) {
         const [tRows] = await pool.query('SELECT name FROM teams WHERE id = ? LIMIT 1', [req.staff.teamId || req.staff.team_id]);
         if (tRows.length > 0) teamName = tRows[0].name;
       }
-    } else if (isLead && !isMD) {
-      // Team lead: filter to own team
-      const leadTeamId = req.staff.teamId || req.staff.team_id;
-      if (leadTeamId) {
-        whereConditions.push('s.team_id = ?');
-        params.push(leadTeamId);
-      }
-      employeeName = req.staff.fullName || req.staff.full_name || req.staff.name || 'Team Lead';
     }
 
     const [rows] = await pool.query(
@@ -1132,8 +1156,11 @@ async function getDailyRegister(req, res, next) {
 async function getFollowUps(req, res, next) {
   try {
     const roleUpper = (req.staff?.role || '').toUpperCase();
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
-    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const isMD = req.staff && (['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*'));
+    const isLead = !isMD && req.staff && ['LEAD', 'TEAM_LEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
 
     let whereConditions = ["wr.follow_up_date IS NOT NULL", "wr.work_status != 'Completed'"];
@@ -1259,8 +1286,11 @@ async function exportReports(req, res, next) {
     }
 
     const roleUpper = (req.staff?.role || '').toUpperCase();
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
-    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const isMD = req.staff && (['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*'));
+    const isLead = !isMD && req.staff && ['LEAD', 'TEAM_LEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
     const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
 

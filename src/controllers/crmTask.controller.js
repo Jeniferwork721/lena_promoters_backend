@@ -10,8 +10,8 @@ async function getTasks(req, res, next) {
     const perms = Array.isArray(req.staff?.permissions)
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff?.permissions || '[]') : []);
-    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HR'].includes(roleUpper) || perms.includes('*');
-    const isLead = !isMD && ['MANAGER', 'LEAD', 'TEAM_LEAD', 'SALES_HEAD'].includes(roleUpper);
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(roleUpper) || perms.includes('*');
+    const isLead = !isMD && ['LEAD', 'TEAM_LEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -141,7 +141,7 @@ async function createTask(req, res, next) {
     const perms = Array.isArray(req.staff?.permissions)
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff?.permissions || '[]') : []);
-    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HR'].includes(roleUpper) || perms.includes('*');
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(roleUpper) || perms.includes('*');
     const { title, desc, employeeId, priority = 'Medium', due } = req.body;
 
     if (!title || !title.trim()) {
@@ -234,7 +234,7 @@ async function updateTaskStatus(req, res, next) {
     const perms = Array.isArray(req.staff?.permissions)
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff?.permissions || '[]') : []);
-    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HR'].includes(roleUpper) || perms.includes('*');
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(roleUpper) || perms.includes('*');
 
     if (!status || !['Pending', 'Ongoing', 'In Progress', 'Completed'].includes(status)) {
       return res.status(400).json({

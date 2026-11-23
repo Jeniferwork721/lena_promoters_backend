@@ -491,9 +491,9 @@ async function getStaffEntries(req, res, next) {
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
 
-    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'COUPON_HEAD', 'SALES_HEAD', 'HEAD_MANAGER'].includes(roleUpper)
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'COUPON_HEAD'].includes(roleUpper)
       || perms.includes('*') || perms.includes('coupon_mgmt');
-    const isLead = !isMD && ['TEAM_LEAD', 'LEAD', 'MANAGER'].includes(roleUpper);
+    const isLead = !isMD && ['TEAM_LEAD', 'LEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
     const callerEmpId = req.staff?.employee_id;
     const callerName = req.staff?.full_name || req.staff?.name || req.staff?.fullName;
@@ -1513,8 +1513,12 @@ async function startNewEvent(req, res, next) {
     const { eventTitle, bumperPrize, assuredGift, entryFee } = req.body || {};
     const staff = req.staff;
 
-    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'COUPON_HEAD', 'HEAD_MANAGER'];
-    if (staff && !allowedRoles.includes((staff.role || '').toUpperCase())) {
+    const perms = Array.isArray(staff?.permissions)
+      ? staff.permissions
+      : (typeof staff?.permissions === 'string' ? JSON.parse(staff.permissions || '[]') : []);
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'COUPON_HEAD'];
+    const canManage = allowedRoles.includes((staff?.role || '').toUpperCase()) || perms.includes('*') || perms.includes('coupon_mgmt');
+    if (staff && !canManage) {
       return res.status(403).json({
         success: false,
         message: 'Only Admin or Coupon Head can start a new Lucky Draw season.',
@@ -1588,8 +1592,12 @@ async function endEvent(req, res, next) {
     } = req.body || {};
     const staff = req.staff;
 
-    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'COUPON_HEAD', 'HEAD_MANAGER'];
-    if (staff && !allowedRoles.includes((staff.role || '').toUpperCase())) {
+    const perms = Array.isArray(staff?.permissions)
+      ? staff.permissions
+      : (typeof staff?.permissions === 'string' ? JSON.parse(staff.permissions || '[]') : []);
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'COUPON_HEAD'];
+    const canManage = allowedRoles.includes((staff?.role || '').toUpperCase()) || perms.includes('*') || perms.includes('coupon_mgmt');
+    if (staff && !canManage) {
       return res.status(403).json({
         success: false,
         message: 'Only Admin or Coupon Head can end a Lucky Draw season.',
@@ -1752,8 +1760,12 @@ async function updateEvent(req, res, next) {
     } = req.body || {};
 
     const staff = req.staff;
-    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MANAGER', 'COUPON_HEAD', 'HEAD_MANAGER'];
-    if (staff && !allowedRoles.includes((staff.role || '').toUpperCase())) {
+    const perms = Array.isArray(staff?.permissions)
+      ? staff.permissions
+      : (typeof staff?.permissions === 'string' ? JSON.parse(staff.permissions || '[]') : []);
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'MD', 'COUPON_HEAD'];
+    const canManage = allowedRoles.includes((staff?.role || '').toUpperCase()) || perms.includes('*') || perms.includes('coupon_mgmt');
+    if (staff && !canManage) {
       return res.status(403).json({
         success: false,
         message: 'Only Admin or Coupon Head can edit season details.',
@@ -1977,9 +1989,9 @@ async function getCouponReports(req, res, next) {
       ? req.staff.permissions
       : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
 
-    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'COUPON_HEAD', 'SALES_HEAD', 'HEAD_MANAGER'].includes(roleUpper)
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'COUPON_HEAD'].includes(roleUpper)
       || perms.includes('*') || perms.includes('coupon_mgmt');
-    const isLead = !isMD && ['TEAM_LEAD', 'LEAD', 'MANAGER'].includes(roleUpper);
+    const isLead = !isMD && ['TEAM_LEAD', 'LEAD'].includes(roleUpper);
     const callerId = req.staff?.id;
     const callerEmpId = req.staff?.employee_id;
     const callerName = req.staff?.full_name || req.staff?.name || req.staff?.fullName;
