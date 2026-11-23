@@ -75,14 +75,20 @@ function requireMD(req, res, next) {
     perms.includes('*') ||
     perms.includes('employees_manage');
 
-  // Allow read-only access for staff with report/team permissions
+  // Allow read-only access for staff with report/team permissions or managed teams
   const isReadOnly = req.method === 'GET';
+  const hasManagedTeams = (Array.isArray(req.staff?.managedTeams) && req.staff.managedTeams.length > 0) ||
+    (Array.isArray(req.staff?.managed_teams) && req.staff.managed_teams.length > 0) ||
+    (typeof req.staff?.managed_teams === 'string' && req.staff.managed_teams !== '[]' && req.staff.managed_teams.trim() !== '');
+
   const hasManagementReadAccess = isReadOnly && (
     perms.includes('reports_team') ||
     perms.includes('reports_employee') ||
     perms.includes('reports') ||
     perms.includes('reports_all') ||
-    perms.includes('assign_leads')
+    perms.includes('reports_managed_teams') ||
+    perms.includes('assign_leads') ||
+    hasManagedTeams
   );
 
   if (!isExecutiveAdmin && !hasManagementReadAccess) {

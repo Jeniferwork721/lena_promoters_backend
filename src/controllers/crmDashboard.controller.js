@@ -1,4 +1,5 @@
 const { pool } = require('../config/db');
+const { getManagedTeamIds } = require('../utils/teamScope');
 
 /**
  * Helper to compute date range and working days (excluding Sundays) in Asia/Kolkata
@@ -45,14 +46,39 @@ function getPeriodDateRange(period = 'monthly') {
 }
 
 /**
+ * Helper to resolve dashboard scope based strictly on permissions and managed teams
+ */
+async function resolveDashboardScope(req) {
+  const callerId = req.staff?.id;
+  const perms = Array.isArray(req.staff?.permissions)
+    ? req.staff.permissions
+    : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+  const roleUpper = (req.staff?.role || '').toUpperCase();
+  const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(roleUpper) || perms.includes('*');
+  const hasAllReports = isMD || perms.includes('reports_employee') || perms.includes('reports_all');
+
+  const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
+  const isMultiTeamManager = !hasAllReports && managedTeamIds.length > 0;
+  const isLead = !hasAllReports && !isMultiTeamManager && (['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team') || perms.includes('reports_team'));
+
+  return {
+    callerId,
+    hasAllReports,
+    isMultiTeamManager,
+    managedTeamIds,
+    isLead,
+    teamId: req.staff?.teamId || req.staff?.team_id || 0,
+  };
+}
+
+/**
  * 34. GET /dashboard/summary (Scoped: MD all, Lead own team, Employee self)
  * Query: period (daily, weekly, monthly, yearly)
  */
 async function getDashboardSummary(req, res, next) {
   try {
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
-    const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
-    const callerId = req.staff?.id;
+    const scope = await resolveDashboardScope(req);
+    const callerId = scope.callerId;
     const period = (req.query.period || 'monthly').toLowerCase();
 
     const { startDate, endDate } = getPeriodDateRange(period);
@@ -63,14 +89,20 @@ async function getDashboardSummary(req, res, next) {
     let taskFilter = 'tk.due_date >= ? AND tk.due_date <= ?';
     let taskParams = [startDate, endDate];
 
-    if (isMD) {
-      // MD sees all
-    } else if (isLead) {
-      reportFilter += ' AND s.team_id = ?';
-      reportParams.push(req.staff.teamId || req.staff.team_id || 0);
+    if (scope.hasAllReports) {
+      // MD / whole company sees all
+    } else if (scope.isMultiTeamManager) {
+      reportFilter += ' AND s.team_id IN (?)';
+      reportParams.push(scope.managedTeamIds);
 
-      taskFilter += ' AND tk.lead_id = ?';
-      taskParams.push(callerId);
+      taskFilter += ' AND (tk.lead_id IN (SELECT lead_id FROM teams WHERE id IN (?)) OR tk.employee_id IN (SELECT id FROM staff_users WHERE team_id IN (?)))';
+      taskParams.push(scope.managedTeamIds, scope.managedTeamIds);
+    } else if (scope.isLead) {
+      reportFilter += ' AND s.team_id = ?';
+      reportParams.push(scope.teamId);
+
+      taskFilter += ' AND (tk.lead_id = ? OR tk.employee_id IN (SELECT id FROM staff_users WHERE team_id = ?))';
+      taskParams.push(callerId, scope.teamId);
     } else {
       reportFilter += ' AND wr.employee_id = ?';
       reportParams.push(callerId);
@@ -132,9 +164,8 @@ async function getDashboardSummary(req, res, next) {
  */
 async function getDashboardTrend(req, res, next) {
   try {
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
-    const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
-    const callerId = req.staff?.id;
+    const scope = await resolveDashboardScope(req);
+    const callerId = scope.callerId;
     const period = (req.query.period || 'weekly').toLowerCase();
 
     const { startDate, endDate } = getPeriodDateRange(period);
@@ -142,11 +173,14 @@ async function getDashboardTrend(req, res, next) {
     let whereSql = 'wr.report_date >= ? AND wr.report_date <= ?';
     let params = [startDate, endDate];
 
-    if (isMD) {
-      // MD sees all
-    } else if (isLead) {
+    if (scope.hasAllReports) {
+      // MD / whole company sees all
+    } else if (scope.isMultiTeamManager) {
+      whereSql += ' AND s.team_id IN (?)';
+      params.push(scope.managedTeamIds);
+    } else if (scope.isLead) {
       whereSql += ' AND s.team_id = ?';
-      params.push(req.staff.teamId || req.staff.team_id || 0);
+      params.push(scope.teamId);
     } else {
       whereSql += ' AND wr.employee_id = ?';
       params.push(callerId);
@@ -222,18 +256,20 @@ async function getDashboardTrend(req, res, next) {
  */
 async function getDashboardTasks(req, res, next) {
   try {
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
-    const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
-    const callerId = req.staff?.id;
+    const scope = await resolveDashboardScope(req);
+    const callerId = scope.callerId;
 
     let filter = '1=1';
     let params = [];
 
-    if (isMD) {
-      // MD sees all
-    } else if (isLead) {
-      filter = 'tk.lead_id = ?';
-      params.push(callerId);
+    if (scope.hasAllReports) {
+      // MD / whole company sees all
+    } else if (scope.isMultiTeamManager) {
+      filter = '(tk.lead_id IN (SELECT lead_id FROM teams WHERE id IN (?)) OR tk.employee_id IN (SELECT id FROM staff_users WHERE team_id IN (?)))';
+      params.push(scope.managedTeamIds, scope.managedTeamIds);
+    } else if (scope.isLead) {
+      filter = '(tk.lead_id = ? OR tk.employee_id IN (SELECT id FROM staff_users WHERE team_id = ?))';
+      params.push(callerId, scope.teamId);
     } else {
       filter = 'tk.employee_id = ?';
       params.push(callerId);
@@ -270,8 +306,8 @@ async function getDashboardTasks(req, res, next) {
  */
 async function getEmployeePerformance(req, res, next) {
   try {
-    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN'].includes((req.staff.role || '').toUpperCase());
-    const isLead = req.staff && ['MANAGER', 'LEAD'].includes((req.staff.role || '').toUpperCase());
+    const scope = await resolveDashboardScope(req);
+    const callerId = scope.callerId;
     const period = (req.query.period || 'monthly').toLowerCase();
     const teamIdFilter = req.query.teamId;
 
@@ -280,12 +316,25 @@ async function getEmployeePerformance(req, res, next) {
     let whereSql = "s.is_active = 1 AND s.role NOT IN ('ADMIN', 'SUPER_ADMIN')";
     let params = [];
 
-    if (isLead && !isMD) {
+    if (scope.hasAllReports) {
+      if (teamIdFilter) {
+        whereSql += ' AND s.team_id = ?';
+        params.push(teamIdFilter);
+      }
+    } else if (scope.isMultiTeamManager) {
+      if (teamIdFilter && scope.managedTeamIds.map(String).includes(String(teamIdFilter))) {
+        whereSql += ' AND s.team_id = ?';
+        params.push(teamIdFilter);
+      } else {
+        whereSql += ' AND s.team_id IN (?)';
+        params.push(scope.managedTeamIds);
+      }
+    } else if (scope.isLead) {
       whereSql += ' AND s.team_id = ?';
-      params.push(req.staff.teamId || req.staff.team_id || 0);
-    } else if (isMD && teamIdFilter) {
-      whereSql += ' AND s.team_id = ?';
-      params.push(teamIdFilter);
+      params.push(scope.teamId);
+    } else {
+      whereSql += ' AND s.id = ?';
+      params.push(callerId);
     }
 
     // Query employees
@@ -421,8 +470,24 @@ async function getEmployeePerformance(req, res, next) {
  */
 async function getTeamPerformance(req, res, next) {
   try {
+    const scope = await resolveDashboardScope(req);
     const period = (req.query.period || 'monthly').toLowerCase();
     const { startDate, endDate, workingDays } = getPeriodDateRange(period);
+
+    let teamWhere = '1=1';
+    let teamParams = [];
+
+    if (!scope.hasAllReports) {
+      if (scope.isMultiTeamManager) {
+        teamWhere = 't.id IN (?)';
+        teamParams.push(scope.managedTeamIds);
+      } else if (scope.isLead) {
+        teamWhere = 't.id = ?';
+        teamParams.push(scope.teamId);
+      } else {
+        teamWhere = '1=0';
+      }
+    }
 
     const [teams] = await pool.query(`
       SELECT 
@@ -433,8 +498,9 @@ async function getTeamPerformance(req, res, next) {
         (SELECT COUNT(*) FROM staff_users m WHERE m.team_id = t.id) as employeeCount
       FROM teams t
       LEFT JOIN staff_users s ON t.lead_id = s.id
+      WHERE ${teamWhere}
       ORDER BY t.name ASC
-    `);
+    `, teamParams);
 
     if (teams.length === 0) {
       return res.status(200).json({ success: true, data: [] });
