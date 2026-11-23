@@ -202,6 +202,7 @@ async function loginWithPassword(req, res, next) {
           : (['ADMIN', 'SUPER_ADMIN', 'MD'].includes((staff.role || '').toUpperCase()) ? ['*'] : []),
         teamId: staff.team_id || null,
         teamName,
+        managedTeams: parseJsonSafe(staff.managed_teams, []),
         mustChangePassword: Boolean(staff.must_change_password),
         department: staff.department || null,
         designation: staff.designation || null,
@@ -235,6 +236,7 @@ async function loginWithPassword(req, res, next) {
         role: (appRole || staff.role || 'emp').toLowerCase(),
         designation: staff.designation || staff.role || 'Sales Executive',
         teamId: staff.team_id ? String(staff.team_id) : null,
+        managedTeams: parseJsonSafe(staff.managed_teams, []),
         branch: staff.branch_location || 'Karaikudi',
         permissions: staff.permissions
           ? (typeof staff.permissions === 'string' ? parseJsonSafe(staff.permissions, []) : staff.permissions)
@@ -1825,6 +1827,7 @@ async function getMe(req, res, next) {
           : (['ADMIN', 'SUPER_ADMIN', 'MD'].includes((staff.role || '').toUpperCase()) ? ['*'] : []),
         teamId: staff.team_id || null,
         teamName: staff.team_name || null,
+        managedTeams: parseJsonSafe(staff.managed_teams, []),
         department: staff.department || null,
         designation: staff.designation || null,
         mustChangePassword: Boolean(staff.must_change_password),

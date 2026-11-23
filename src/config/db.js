@@ -62,6 +62,7 @@ async function initializeDatabase() {
       { name: 'designation', def: "VARCHAR(150) NULL AFTER `role`" },
       { name: 'permissions', def: "JSON NULL AFTER `department`" },
       { name: 'team_id', def: "INT NULL AFTER `role`" },
+      { name: 'managed_teams', def: "JSON NULL AFTER `team_id`" },
       { name: 'must_change_password', def: "TINYINT(1) NOT NULL DEFAULT 0 AFTER `team_id`" },
       { name: 'plain_password', def: "VARCHAR(255) NULL AFTER `password_hash`" },
       { name: 'created_by', def: "INT NULL AFTER `must_change_password`" },
@@ -868,6 +869,11 @@ async function initializeDatabase() {
       if (desigCol.length === 0) {
         await connection.query("ALTER TABLE `staff_users` ADD COLUMN `designation` VARCHAR(150) NULL AFTER `role`");
       }
+      const [managedTeamsCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'managed_teams'");
+      if (managedTeamsCol.length === 0) {
+        await connection.query("ALTER TABLE `staff_users` ADD COLUMN `managed_teams` JSON NULL AFTER `team_id`");
+      }
+
 
       // 11b. Staff Mandatory & Optional Profile Setup Columns
       const staffProfileCols = [

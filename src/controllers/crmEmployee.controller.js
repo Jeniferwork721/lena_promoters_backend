@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const { pool } = require('../config/db');
 const { sendStaffWelcomeEmail } = require('../services/email.service');
 const { generateNextStaffId } = require('./crmTeam.controller');
+const { getManagedTeamIds } = require('../utils/teamScope');
 
 function parseJsonSafe(val, fallback = []) {
   if (!val) return fallback;
@@ -48,11 +49,10 @@ async function getEmployees(req, res, next) {
     let params = [];
 
     // Role-based scoping
-    if (isLead && !isMD) {
-      // Lead can only see members of their own team
-      whereConditions.push('s.team_id = ?');
-      params.push(req.staff.teamId || req.staff.team_id || 0);
-    } else if (isMD) {
+    const managedTeamIds = await getManagedTeamIds(req.staff?.id, req.staff);
+    const isMultiTeamManager = !isMD && managedTeamIds.length > 0;
+
+    if (isMD) {
       if (teamId) {
         whereConditions.push('s.team_id = ?');
         params.push(teamId);
@@ -62,6 +62,18 @@ async function getEmployees(req, res, next) {
       } else if (unassigned === 'true' || unassigned === true) {
         whereConditions.push('s.team_id IS NULL');
       }
+    } else if (isMultiTeamManager) {
+      if (teamId && teamId !== 'ALL_MANAGED' && managedTeamIds.includes(Number(teamId))) {
+        whereConditions.push('s.team_id = ?');
+        params.push(Number(teamId));
+      } else {
+        whereConditions.push('(s.team_id IN (?) OR s.id = ?)');
+        params.push(managedTeamIds, req.staff?.id);
+      }
+    } else if (isLead) {
+      // Lead can only see members of their own team
+      whereConditions.push('s.team_id = ?');
+      params.push(req.staff.teamId || req.staff.team_id || 0);
     }
 
     if (q && q.trim()) {
@@ -97,6 +109,7 @@ async function getEmployees(req, res, next) {
           s.branch_location as branch,
           s.permissions as permissions,
           s.team_id as teamId,
+          s.managed_teams as managedTeams,
           t.name as teamName,
           t.lead_id as leadId,
           lead_user.full_name as leadName,
@@ -168,6 +181,7 @@ async function getEmployees(req, res, next) {
       department: r.department || null,
       branch: r.branch || 'Karaikudi – Head Office',
       permissions: parseJsonSafe(r.permissions, []),
+      managedTeams: parseJsonSafe(r.managedTeams, []),
       teamId: r.teamId ? String(r.teamId) : null,
       teamName: r.teamName || null,
       leadId: r.leadId ? String(r.leadId) : null,
@@ -209,7 +223,7 @@ async function getEmployees(req, res, next) {
  */
 async function createEmployee(req, res, next) {
   try {
-    const { name, phone, email, leadId, teamId, role, designation, department, branch, permissions } = req.body;
+    const { name, phone, email, leadId, teamId, role, designation, department, branch, permissions, managedTeams } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -295,30 +309,43 @@ async function createEmployee(req, res, next) {
     const passwordHash = await bcrypt.hash(tempPassword, 10);
     const permArray = Array.isArray(permissions) ? permissions : parseJsonSafe(permissions, []);
     const permJson = permArray.length > 0 ? JSON.stringify(permArray) : null;
+    const cleanManagedTeams = Array.isArray(managedTeams)
+      ? managedTeams.map((tid) => Number(tid)).filter((tid) => !isNaN(tid) && tid > 0)
+      : (managedTeams ? parseJsonSafe(managedTeams, []) : []);
+    const managedTeamsJson = cleanManagedTeams.length > 0 ? JSON.stringify(cleanManagedTeams) : null;
 
     let insertResult;
     try {
       [insertResult] = await pool.query(
         `INSERT INTO staff_users 
-         (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, permissions, team_id, must_change_password)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-        [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, permJson, targetTeamId]
+         (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, permissions, team_id, managed_teams, must_change_password)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, permJson, targetTeamId, managedTeamsJson]
       );
     } catch (_) {
       try {
         [insertResult] = await pool.query(
           `INSERT INTO staff_users 
-           (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, team_id, must_change_password)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-          [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, targetTeamId]
+           (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, permissions, team_id, must_change_password)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+          [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, permJson, targetTeamId]
         );
       } catch (_) {
-        [insertResult] = await pool.query(
-          `INSERT INTO staff_users 
-           (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, team_id, must_change_password)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-          [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, targetTeamId]
-        );
+        try {
+          [insertResult] = await pool.query(
+            `INSERT INTO staff_users 
+             (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, team_id, must_change_password)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+            [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, targetTeamId]
+          );
+        } catch (_) {
+          [insertResult] = await pool.query(
+            `INSERT INTO staff_users 
+             (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, team_id, must_change_password)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+            [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, targetTeamId]
+          );
+        }
       }
     }
     const newStaffId = insertResult.insertId;
@@ -363,6 +390,7 @@ async function createEmployee(req, res, next) {
         department: cleanDepartment || null,
         branch: cleanBranch,
         permissions: permArray,
+        managedTeams: cleanManagedTeams,
         teamId: targetTeamId ? String(targetTeamId) : null,
         leadId: targetLeadId ? String(targetLeadId) : null,
         hasAccount: true,
@@ -398,6 +426,7 @@ async function getEmployeeById(req, res, next) {
           s.branch_location as branch,
           s.permissions as permissions,
           s.team_id as teamId,
+          s.managed_teams as managedTeams,
           t.name as teamName,
           t.lead_id as leadId,
           lead_user.full_name as leadName,
@@ -445,8 +474,10 @@ async function getEmployeeById(req, res, next) {
     // Authorization check
     const isSelf = callerId === String(employee.id);
     const isLeadOfTeam = String(employee.leadId || '') === callerId;
+    const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
+    const isManagerOfTeam = employee.teamId && managedTeamIds.includes(Number(employee.teamId));
 
-    if (!isMD && !isSelf && !isLeadOfTeam) {
+    if (!isMD && !isSelf && !isLeadOfTeam && !isManagerOfTeam) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You do not have permission to view this employee.',
@@ -466,6 +497,7 @@ async function getEmployeeById(req, res, next) {
         department: employee.department || null,
         branch: employee.branch || 'Karaikudi – Head Office',
         permissions: parseJsonSafe(employee.permissions, []),
+        managedTeams: parseJsonSafe(employee.managedTeams, []),
         teamId: employee.teamId ? String(employee.teamId) : null,
         teamName: employee.teamName || null,
         leadId: employee.leadId ? String(employee.leadId) : null,
@@ -584,7 +616,7 @@ async function updateEmployeeAssignment(req, res, next) {
 async function updateEmployee(req, res, next) {
   try {
     const employeeId = req.params.id;
-    const { name, phone, email, role, designation, department, leadId, teamName, branch, permissions } = req.body;
+    const { name, phone, email, role, designation, department, leadId, teamName, branch, permissions, managedTeams } = req.body;
 
     const [empRows] = await pool.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [employeeId]);
     if (empRows.length === 0) {
@@ -605,6 +637,14 @@ async function updateEmployee(req, res, next) {
     const hasPermUpdate = permissions !== undefined;
     const permArray = hasPermUpdate ? (Array.isArray(permissions) ? permissions : parseJsonSafe(permissions, [])) : undefined;
     const permJson = hasPermUpdate ? JSON.stringify(permArray) : null;
+
+    const hasManagedTeamsUpdate = managedTeams !== undefined;
+    const cleanManagedTeams = hasManagedTeamsUpdate
+      ? (Array.isArray(managedTeams)
+          ? managedTeams.map((tid) => Number(tid)).filter((tid) => !isNaN(tid) && tid > 0)
+          : parseJsonSafe(managedTeams, []))
+      : undefined;
+    const managedTeamsJson = hasManagedTeamsUpdate && cleanManagedTeams.length > 0 ? JSON.stringify(cleanManagedTeams) : null;
 
     if (!cleanName) {
       return res.status(400).json({ success: false, message: 'Employee name is required.', errors: { name: 'Required' } });
@@ -694,12 +734,24 @@ async function updateEmployee(req, res, next) {
 
     // Update staff_users
     try {
-      if (hasPermUpdate) {
+      if (hasPermUpdate && hasManagedTeamsUpdate) {
+        await pool.query(`
+          UPDATE staff_users 
+          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, permissions = ?, managed_teams = ?
+          WHERE id = ?
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, managedTeamsJson, employeeId]);
+      } else if (hasPermUpdate) {
         await pool.query(`
           UPDATE staff_users 
           SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, permissions = ?
           WHERE id = ?
         `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, employeeId]);
+      } else if (hasManagedTeamsUpdate) {
+        await pool.query(`
+          UPDATE staff_users 
+          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, managed_teams = ?
+          WHERE id = ?
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, managedTeamsJson, employeeId]);
       } else {
         await pool.query(`
           UPDATE staff_users 
@@ -732,6 +784,7 @@ async function updateEmployee(req, res, next) {
           s.branch_location as branch,
           s.permissions as permissions,
           s.team_id as teamId,
+          s.managed_teams as managedTeams,
           t.name as teamName,
           t.lead_id as leadId,
           lead_user.full_name as leadName,
@@ -781,6 +834,7 @@ async function updateEmployee(req, res, next) {
         department: updated.department || cleanDepartment || null,
         branch: updated.branch || cleanBranch,
         permissions: parseJsonSafe(updated.permissions, permArray || []),
+        managedTeams: parseJsonSafe(updated.managedTeams, cleanManagedTeams !== undefined ? cleanManagedTeams : parseJsonSafe(currentEmp.managed_teams, [])),
         teamId: updated.teamId ? String(updated.teamId) : (finalTeamId ? String(finalTeamId) : null),
         teamName: updated.teamName || null,
         leadId: updated.leadId ? String(updated.leadId) : null,

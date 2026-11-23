@@ -1,4 +1,5 @@
 const { pool } = require('../config/db');
+const { getManagedTeamIds } = require('../utils/teamScope');
 
 /**
  * Validate phone number: accepts 10-digit Indian numbers or foreign numbers with +<country code><number>
@@ -443,19 +444,36 @@ async function getReports(req, res, next) {
     const hasOwnTeamReport = isLead || perms.includes('reports_own_team');
 
     // Role-based scoping
+    const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
+
     if (hasAllReports) {
       if (employeeId) {
         whereConditions.push('(wr.employee_id = ? OR s.employee_id = ?)');
         params.push(employeeId, employeeId);
       }
-      if (teamId) {
+      if (teamId && teamId !== 'ALL' && teamId !== 'ALL_MANAGED') {
         whereConditions.push('s.team_id = ?');
         params.push(teamId);
       }
+    } else if (managedTeamIds.length > 0) {
+      // Multi-team manager (e.g. Saravanan managing 3 teams): view together (ALL_MANAGED/empty) or separate
+      if (employeeId) {
+        whereConditions.push('(wr.employee_id = ? OR s.employee_id = ?)');
+        params.push(employeeId, employeeId);
+      }
+      if (teamId && teamId !== 'ALL' && teamId !== 'ALL_MANAGED' && managedTeamIds.includes(Number(teamId))) {
+        whereConditions.push('s.team_id = ?');
+        params.push(Number(teamId));
+      } else {
+        // Combined view of all managed teams + caller's own logged entries
+        whereConditions.push('(s.team_id IN (?) OR wr.employee_id = ?)');
+        params.push(managedTeamIds, callerId);
+      }
     } else if (hasOwnTeamReport) {
-      // Lead or staff with own team report access sees reports of their own team
-      whereConditions.push('s.team_id = ?');
-      params.push(req.staff.teamId || req.staff.team_id || 0);
+      // Lead or staff with own team report access sees reports of their own team + self
+      const ownTeam = req.staff.teamId || req.staff.team_id || 0;
+      whereConditions.push('(s.team_id = ? OR wr.employee_id = ?)');
+      params.push(ownTeam, callerId);
 
       if (employeeId) {
         whereConditions.push('(wr.employee_id = ? OR s.employee_id = ?)');
@@ -1121,11 +1139,16 @@ async function getFollowUps(req, res, next) {
     let whereConditions = ["wr.follow_up_date IS NOT NULL", "wr.work_status != 'Completed'"];
     let params = [];
 
+    const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
+
     if (isMD) {
       // MD sees all
+    } else if (managedTeamIds.length > 0) {
+      whereConditions.push('(s.team_id IN (?) OR wr.employee_id = ?)');
+      params.push(managedTeamIds, callerId);
     } else if (isLead) {
-      whereConditions.push('s.team_id = ?');
-      params.push(req.staff.teamId || req.staff.team_id || 0);
+      whereConditions.push('(s.team_id = ? OR wr.employee_id = ?)');
+      params.push(req.staff.teamId || req.staff.team_id || 0, callerId);
     } else {
       whereConditions.push('wr.employee_id = ?');
       params.push(callerId);
@@ -1234,9 +1257,33 @@ async function exportReports(req, res, next) {
       whereConditions.push('wr.employee_id = ?');
       params.push(employeeId);
     }
-    if (teamId) {
-      whereConditions.push('s.team_id = ?');
-      params.push(teamId);
+
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const isMD = req.staff && ['ADMIN', 'SUPER_ADMIN', 'MD', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'SALES_HEAD', 'HEAD_MANAGER', 'SALES_MANAGER'].includes(roleUpper);
+    const isLead = !isMD && req.staff && ['MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper);
+    const callerId = req.staff?.id;
+    const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
+
+    if (isMD) {
+      if (teamId && teamId !== 'ALL' && teamId !== 'ALL_MANAGED') {
+        whereConditions.push('s.team_id = ?');
+        params.push(teamId);
+      }
+    } else if (managedTeamIds.length > 0) {
+      if (teamId && teamId !== 'ALL' && teamId !== 'ALL_MANAGED' && managedTeamIds.includes(Number(teamId))) {
+        whereConditions.push('s.team_id = ?');
+        params.push(Number(teamId));
+      } else {
+        whereConditions.push('(s.team_id IN (?) OR wr.employee_id = ?)');
+        params.push(managedTeamIds, callerId);
+      }
+    } else if (isLead) {
+      const ownTeam = req.staff.teamId || req.staff.team_id || 0;
+      whereConditions.push('(s.team_id = ? OR wr.employee_id = ?)');
+      params.push(ownTeam, callerId);
+    } else {
+      whereConditions.push('wr.employee_id = ?');
+      params.push(callerId);
     }
     if (callStatus) {
       whereConditions.push('wr.call_status = ?');

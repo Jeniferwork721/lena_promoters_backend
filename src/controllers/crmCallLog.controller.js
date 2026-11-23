@@ -1,4 +1,5 @@
 const { pool } = require('../config/db');
+const { getManagedTeamIds } = require('../utils/teamScope');
 
 let tableEnsured = false;
 
@@ -347,11 +348,14 @@ async function getCallLogs(req, res, next) {
       perms.includes('employees_manage') ||
       isManager;
 
+    const managedTeamIds = await getManagedTeamIds(callerId, req.staff);
+    const hasManagedTeams = managedTeamIds.length > 0;
+
     // Team lead (sees own team members + self)
     const isLead = !isMD && !isSalesStaff && ['TEAM_LEAD', 'LEAD'].includes(roleUpper);
 
     // Single individual employee (ONLY ever sees their own call logs)
-    const isSingleEmployee = !isMD && !isLead;
+    const isSingleEmployee = !isMD && !isLead && !hasManagedTeams;
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '100', 10)));
@@ -363,23 +367,32 @@ async function getCallLogs(req, res, next) {
     const baseParams = [];
 
     // Role scoping
-    if (isSingleEmployee || mineOnly === 'true' || mineOnly === true) {
+    if (staffId === 'MINE' || mineOnly === 'true' || mineOnly === true) {
+      // Any user (MD, Manager, Lead, Employee) can track their own call logs exclusively
+      baseWhere.push('cl.staff_id = ?');
+      baseParams.push(callerId);
+    } else if (isSingleEmployee) {
       // Single employee ALWAYS only sees their own call logs
       baseWhere.push('cl.staff_id = ?');
       baseParams.push(callerId);
-    } else if (isLead && !isMD) {
-      const [teamRows] = await pool.query('SELECT id FROM teams WHERE lead_id = ?', [callerId]);
-      const teamIds = teamRows.map((t) => t.id);
-      if (teamIds.length > 0) {
-        baseWhere.push(`(cl.staff_id = ? OR s.team_id IN (${teamIds.map(() => '?').join(',')}))`);
-        baseParams.push(callerId, ...teamIds);
-      } else {
-        baseWhere.push('cl.staff_id = ?');
-        baseParams.push(callerId);
-      }
+    } else if (!isMD && (isLead || hasManagedTeams)) {
       if (staffId && staffId !== 'ALL') {
         baseWhere.push('cl.staff_id = ?');
         baseParams.push(staffId);
+      } else if (hasManagedTeams) {
+        // Multi-team manager: view all members across all their managed teams + caller's own logs
+        baseWhere.push('(cl.staff_id = ? OR s.team_id IN (?))');
+        baseParams.push(callerId, managedTeamIds);
+      } else {
+        const [teamRows] = await pool.query('SELECT id FROM teams WHERE lead_id = ?', [callerId]);
+        const teamIds = teamRows.map((t) => t.id);
+        if (teamIds.length > 0) {
+          baseWhere.push(`(cl.staff_id = ? OR s.team_id IN (${teamIds.map(() => '?').join(',')}))`);
+          baseParams.push(callerId, ...teamIds);
+        } else {
+          baseWhere.push('cl.staff_id = ?');
+          baseParams.push(callerId);
+        }
       }
     } else if (isMD) {
       if (staffId && staffId !== 'ALL') {
@@ -479,16 +492,24 @@ async function getCallLogs(req, res, next) {
     );
 
     let staffList = [];
-    if (isMD || isLead) {
-      const staffFilterWhere = isMD
-        ? ''
-        : `WHERE cl.staff_id = ${pool.escape(callerId)} OR s.team_id IN (SELECT id FROM teams WHERE lead_id = ${pool.escape(callerId)})`;
+    if (isMD || isLead || hasManagedTeams) {
+      let staffFilterWhere = '';
+      let staffFilterParams = [];
+      if (!isMD) {
+        if (hasManagedTeams) {
+          staffFilterWhere = 'WHERE cl.staff_id = ? OR s.team_id IN (?)';
+          staffFilterParams = [callerId, managedTeamIds];
+        } else {
+          staffFilterWhere = `WHERE cl.staff_id = ${pool.escape(callerId)} OR s.team_id IN (SELECT id FROM teams WHERE lead_id = ${pool.escape(callerId)})`;
+        }
+      }
       const [sRows] = await pool.query(
         `SELECT DISTINCT cl.staff_id as id, COALESCE(s.full_name, cl.staff_name) as name, COALESCE(s.employee_id, cl.employee_id) as employeeId
          FROM staff_call_logs cl
          LEFT JOIN staff_users s ON cl.staff_id = s.id
          ${staffFilterWhere}
-         ORDER BY name ASC`
+         ORDER BY name ASC`,
+        staffFilterParams
       );
       staffList = sRows.map((r) => ({
         id: String(r.id),
@@ -497,6 +518,22 @@ async function getCallLogs(req, res, next) {
         name: r.name || 'Staff',
         staffName: r.name || 'Staff',
       }));
+
+      // Ensure caller is present in staffList and labeled as Me
+      const callerItem = {
+        id: String(callerId),
+        staffId: req.staff.employeeId || String(callerId),
+        employeeId: req.staff.employeeId || '',
+        name: `${req.staff.fullName || req.staff.name || 'Me'} (Me)`,
+        staffName: `${req.staff.fullName || req.staff.name || 'Me'} (Me)`,
+        isMe: true,
+      };
+      const meIdx = staffList.findIndex((s) => String(s.id) === String(callerId));
+      if (meIdx >= 0) {
+        staffList[meIdx] = callerItem;
+      } else {
+        staffList.unshift(callerItem);
+      }
     }
 
     return res.status(200).json({
