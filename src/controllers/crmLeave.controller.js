@@ -517,9 +517,9 @@ async function getLeaves(req, res, next) {
     // Filter by stage / pending my approval
     if (stage === 'pending_my_approval') {
       if (isHR) {
-        where.push("la.status = 'PENDING_HR'");
+        where.push("la.status IN ('PENDING_HR', 'PENDING_GM', 'PENDING_TL')");
       } else if (isGM) {
-        where.push("la.status = 'PENDING_GM'");
+        where.push("la.status IN ('PENDING_GM', 'PENDING_TL')");
       } else if (isLead) {
         if (teamIdList.length > 0) {
           where.push(`la.status = 'PENDING_TL' AND (la.tl_id = ? OR s.team_id IN (${teamIdList.join(',')}))`);
@@ -655,10 +655,17 @@ async function approveLeave(req, res, next) {
 
     const perms = parsePermissions(req.staff?.permissions);
     const roleUpper = (req.staff?.role || '').toUpperCase();
+    const desigLower = (req.staff?.designation || '').toLowerCase();
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
     const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage');
-    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm');
+    const isGM = !isHR && (
+      roleUpper === 'GENERAL_MANAGER' ||
+      roleUpper === 'SALES_HEAD' ||
+      desigLower.includes('general manager') ||
+      desigLower.includes('gm') ||
+      perms.includes('leaves_gm')
+    );
 
     const [rows] = await pool.query(
       'SELECT * FROM leave_applications WHERE id = ?',
@@ -680,13 +687,73 @@ async function approveLeave(req, res, next) {
 
     const now = new Date();
 
-    // Stage 1: PENDING_TL
-    if (leave.status === 'PENDING_TL') {
-      const isAssignedTL = leave.tl_id && String(leave.tl_id) === String(callerId);
-      if (!isAssignedTL && !isGM && !isHR && !isMD) {
+    // 1. HR or MD Approval -> Grants final leave approval directly
+    // If TL or GM had not acted yet, mark them as SKIPPED so it's clear HR approved directly
+    if (isHR || isMD) {
+      const tlStatus = leave.tl_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
+      const gmStatus = leave.gm_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
+
+      await pool.query(
+        `UPDATE leave_applications 
+         SET tl_status = ?,
+             gm_status = ?,
+             hr_status = 'APPROVED',
+             hr_approved_by = ?,
+             hr_approved_name = ?,
+             hr_comments = ?,
+             hr_action_at = ?,
+             status = 'APPROVED'
+         WHERE id = ?`,
+        [tlStatus, gmStatus, callerId, callerName, comments, now, leaveId]
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Leave officially approved by HR.',
+        stage: 'APPROVED',
+      });
+    }
+
+    // 2. General Manager (GM) Approval -> Approves directly as GM and forwards to HR
+    // If TL had not acted yet, TL is marked as SKIPPED so it's recorded in GM approval only
+    if (isGM) {
+      if (leave.status === 'PENDING_HR') {
         return res.status(403).json({
           success: false,
-          message: 'Only the designated Team Lead, General Manager, or HR can approve this stage.',
+          message: 'This leave is already awaiting final HR approval.',
+        });
+      }
+
+      const tlStatus = leave.tl_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
+
+      await pool.query(
+        `UPDATE leave_applications 
+         SET tl_status = ?,
+             gm_status = 'APPROVED',
+             gm_approved_by = ?,
+             gm_approved_name = ?,
+             gm_comments = ?,
+             gm_action_at = ?,
+             status = 'PENDING_HR'
+         WHERE id = ?`,
+        [tlStatus, callerId, callerName, comments, now, leaveId]
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Leave approved by General Manager. Forwarded to HR for final confirmation.',
+        stage: 'PENDING_HR',
+      });
+    }
+
+    // 3. Team Lead (TL) Approval -> Approves as TL and forwards to GM
+    if (leave.status === 'PENDING_TL') {
+      const isAssignedTL = leave.tl_id && String(leave.tl_id) === String(callerId);
+      const isLead = isAssignedTL || ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team') || perms.includes('leaves_lead');
+      if (!isLead) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only the designated Team Lead, General Manager, or HR can approve this leave.',
         });
       }
 
@@ -709,61 +776,10 @@ async function approveLeave(req, res, next) {
       });
     }
 
-    // Stage 2: PENDING_GM
-    if (leave.status === 'PENDING_GM') {
-      if (!isGM && !isHR && !isMD) {
-        return res.status(403).json({
-          success: false,
-          message: 'Only the General Manager, HR, or MD can approve this stage.',
-        });
-      }
-
-      await pool.query(
-        `UPDATE leave_applications 
-         SET gm_status = 'APPROVED',
-             gm_approved_by = ?,
-             gm_approved_name = ?,
-             gm_comments = ?,
-             gm_action_at = ?,
-             status = 'PENDING_HR'
-         WHERE id = ?`,
-        [callerId, callerName, comments, now, leaveId]
-      );
-
-      return res.status(200).json({
-        success: true,
-        message: 'Leave approved by General Manager. Forwarded to HR for final confirmation.',
-        stage: 'PENDING_HR',
-      });
-    }
-
-    // Stage 3: PENDING_HR
-    if (leave.status === 'PENDING_HR') {
-      if (!isHR && !isMD) {
-        return res.status(403).json({
-          success: false,
-          message: 'Only HR or MD can grant final leave approval.',
-        });
-      }
-
-      await pool.query(
-        `UPDATE leave_applications 
-         SET hr_status = 'APPROVED',
-             hr_approved_by = ?,
-             hr_approved_name = ?,
-             hr_comments = ?,
-             hr_action_at = ?,
-             status = 'APPROVED'
-         WHERE id = ?`,
-        [callerId, callerName, comments, now, leaveId]
-      );
-
-      return res.status(200).json({
-        success: true,
-        message: 'Leave officially approved by HR.',
-        stage: 'APPROVED',
-      });
-    }
+    return res.status(403).json({
+      success: false,
+      message: 'You do not have permission to approve at this stage.',
+    });
 
     return res.status(400).json({ success: false, message: 'Invalid leave approval state.' });
   } catch (err) {

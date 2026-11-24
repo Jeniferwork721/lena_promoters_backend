@@ -1158,6 +1158,25 @@ async function initializeDatabase() {
     `);
     console.log('📋 Verified leave_applications table in DB');
 
+    // Auto-heal any legacy leaves where GM approved directly but was falsely stored under tl_status
+    try {
+      await connection.query(`
+        UPDATE leave_applications la
+        JOIN staff_users s ON la.tl_approved_by = s.id
+        SET la.tl_status = 'SKIPPED',
+            la.gm_status = IF(la.gm_status = 'PENDING', 'APPROVED', la.gm_status),
+            la.gm_approved_by = IF(la.gm_approved_by IS NULL, la.tl_approved_by, la.gm_approved_by),
+            la.gm_approved_name = IF(la.gm_approved_name IS NULL, la.tl_approved_name, la.gm_approved_name),
+            la.gm_action_at = IF(la.gm_action_at IS NULL, la.tl_action_at, la.gm_action_at),
+            la.tl_approved_by = NULL,
+            la.tl_approved_name = NULL,
+            la.status = IF(la.status = 'PENDING_GM', 'PENDING_HR', la.status)
+        WHERE (s.role IN ('GENERAL_MANAGER', 'SALES_HEAD') OR s.designation LIKE '%General Manager%' OR s.designation LIKE '%GM%')
+          AND (la.tl_id IS NULL OR la.tl_id != s.id)
+          AND la.tl_status = 'APPROVED'
+      `);
+    } catch (_) {}
+
     // 20. Gate Passes Table (Official/Field Work/Emergency/Personal exit from office)
     await connection.query(`
       CREATE TABLE IF NOT EXISTS \`gate_passes\` (
