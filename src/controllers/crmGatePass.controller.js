@@ -247,10 +247,41 @@ async function getGatePasses(req, res, next) {
     const perms = parsePermissions(req.staff?.permissions);
     const roleUpper = (req.staff?.role || '').toUpperCase();
 
+    // Dynamically resolve caller's team lead / management context
+    const [callerProfile] = await pool.query(
+      `SELECT id, team_id, managed_teams, role, permissions FROM staff_users WHERE id = ?`,
+      [callerId]
+    );
+    const callerStaff = callerProfile[0] || {};
+
+    const [leadTeamRows] = await pool.query(
+      `SELECT id FROM teams WHERE lead_id = ?`,
+      [callerId]
+    );
+
+    const leadTeamIds = new Set();
+    leadTeamRows.forEach((t) => leadTeamIds.add(Number(t.id)));
+    if (callerStaff.team_id) leadTeamIds.add(Number(callerStaff.team_id));
+    if (callerStaff.managed_teams) {
+      try {
+        const mt = typeof callerStaff.managed_teams === 'string'
+          ? JSON.parse(callerStaff.managed_teams)
+          : callerStaff.managed_teams;
+        if (Array.isArray(mt)) {
+          mt.forEach((tid) => leadTeamIds.add(Number(tid)));
+        }
+      } catch (_) {}
+    }
+    const teamIdList = [...leadTeamIds].filter(Boolean);
+
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
     const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage') || perms.includes('gatepass_manage');
     const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm') || perms.includes('gatepass_approve');
-    const isLead = !isGM && (['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team'));
+    const isLead = !isGM && (
+      leadTeamIds.size > 0 ||
+      ['LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
+      perms.includes('reports_own_team')
+    );
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
@@ -264,11 +295,14 @@ async function getGatePasses(req, res, next) {
     if (isHR || isMD || isGM) {
       // HR/GM/MD can see all gate passes
     } else if (isLead) {
-      // Lead sees team members' gate passes
-      where.push(`gp.employee_id IN (
-        SELECT id FROM staff_users WHERE team_id = (SELECT team_id FROM staff_users WHERE id = ?)
-      )`);
-      params.push(callerId);
+      // Team lead sees teammates' gate passes + own
+      if (teamIdList.length > 0) {
+        where.push(`(gp.employee_id = ? OR gp.employee_id IN (SELECT id FROM staff_users WHERE team_id IN (${teamIdList.join(',')})))`);
+        params.push(callerId);
+      } else {
+        where.push('gp.employee_id = ?');
+        params.push(callerId);
+      }
     } else {
       // Normal employee sees only own
       where.push('gp.employee_id = ?');

@@ -104,12 +104,22 @@ async function computeMonthlyLeaveUsage(employeeId, monthStr) {
     }
   });
 
+  const remainingPaid = Number(Math.max(0, MAX_PAID_LEAVES_PER_MONTH - paidLeavesTaken).toFixed(1));
+  const remainingPerm = Math.max(0, MAX_PERMISSIONS_PER_MONTH - permissionsTaken);
+
   return {
     month: monthStr,
+    maxPaidLeaves: MAX_PAID_LEAVES_PER_MONTH,
+    maxPermissions: MAX_PERMISSIONS_PER_MONTH,
+    maxHoursPerPermission: MAX_HOURS_PER_PERMISSION,
+    paidLeavesLimit: MAX_PAID_LEAVES_PER_MONTH,
+    permissionsLimit: MAX_PERMISSIONS_PER_MONTH,
     paidLeavesTaken: Number(paidLeavesTaken.toFixed(1)),
+    paidLeavesRemaining: remainingPaid,
+    paidLeavesBalance: remainingPaid,
     permissionsTaken,
-    paidLeavesRemaining: Number(Math.max(0, MAX_PAID_LEAVES_PER_MONTH - paidLeavesTaken).toFixed(1)),
-    permissionsRemaining: Math.max(0, MAX_PERMISSIONS_PER_MONTH - permissionsTaken),
+    permissionsRemaining: remainingPerm,
+    permissionsBalance: remainingPerm,
   };
 }
 
@@ -128,15 +138,8 @@ async function getLeaveQuota(req, res, next) {
     return res.status(200).json({
       success: true,
       data: {
-        month,
         employeeId: targetId,
-        maxPaidLeaves: MAX_PAID_LEAVES_PER_MONTH,
-        maxPermissions: MAX_PERMISSIONS_PER_MONTH,
-        maxHoursPerPermission: MAX_HOURS_PER_PERMISSION,
-        paidLeavesTaken: usage.paidLeavesTaken,
-        paidLeavesRemaining: usage.paidLeavesRemaining,
-        permissionsTaken: usage.permissionsTaken,
-        permissionsRemaining: usage.permissionsRemaining,
+        ...usage,
       },
     });
   } catch (err) {
@@ -177,6 +180,8 @@ async function applyLeave(req, res, next) {
       sessionType = 'FULL_DAY', // 'FULL_DAY', 'FIRST_HALF', 'SECOND_HALF', 'PERMISSION_HOURS'
       permissionHours,
       permissionTime,
+      fromTime,
+      toTime,
       numberOfDays = 1.0,
       reason,
       handoverPersonId,
@@ -201,15 +206,45 @@ async function applyLeave(req, res, next) {
     const alreadyTookLeaveCount = usage.paidLeavesTaken;
     const alreadyTookPermissionCount = usage.permissionsTaken;
 
-    // Validate permission hours if leaveFor is PERMISSION
+    // Validate permission hours & time window if leaveFor is PERMISSION
     let numDays = 1.0;
     let permHours = null;
+    let finalPermTime = permissionTime || null;
+
     if (leaveFor === 'PERMISSION') {
-      permHours = Number(permissionHours) || 2.0;
+      const fTime = fromTime || (permissionTime && permissionTime.includes('–') ? permissionTime.split('–')[0].trim() : (permissionTime && permissionTime.includes('-') ? permissionTime.split('-')[0].trim() : null));
+      const tTime = toTime || (permissionTime && permissionTime.includes('–') ? permissionTime.split('–')[1].trim() : (permissionTime && permissionTime.includes('-') ? permissionTime.split('-')[1].trim() : null));
+
+      if (fTime && tTime) {
+        try {
+          const [h1, m1] = String(fTime).split(':').map(Number);
+          const [h2, m2] = String(tTime).split(':').map(Number);
+          const diffMin = (h2 * 60 + (m2 || 0)) - (h1 * 60 + (m1 || 0));
+          if (diffMin <= 0) {
+            return res.status(400).json({
+              success: false,
+              message: 'Permission To Time must be after From Time.',
+            });
+          }
+          if (diffMin > 120) {
+            return res.status(400).json({
+              success: false,
+              message: `Permission cannot exceed 2 hours (selected: ${Math.floor(diffMin / 60)}h ${diffMin % 60}m). Must be 2 hours or below.`,
+            });
+          }
+          permHours = Number((diffMin / 60).toFixed(1));
+          finalPermTime = `${fTime} – ${tTime}`;
+        } catch (_) {
+          permHours = Number(permissionHours) || 2.0;
+        }
+      } else {
+        permHours = Number(permissionHours) || 2.0;
+      }
+
       if (permHours > MAX_HOURS_PER_PERMISSION) {
         return res.status(400).json({
           success: false,
-          message: `Permissions are allowed up to a maximum of ${MAX_HOURS_PER_PERMISSION} hours per session.`,
+          message: `Permissions are allowed up to a maximum of ${MAX_HOURS_PER_PERMISSION} hours per session (Below 2h or exact 2h).`,
         });
       }
       numDays = 0; // Permission does not count as full/half day leave
@@ -284,7 +319,7 @@ async function applyLeave(req, res, next) {
         toDate,
         sessionType,
         permHours,
-        permissionTime || null,
+        finalPermTime || null,
         numDays,
         alreadyTookLeaveCount,
         alreadyTookPermissionCount,
@@ -412,10 +447,42 @@ async function getLeaves(req, res, next) {
     const perms = parsePermissions(req.staff?.permissions);
     const roleUpper = (req.staff?.role || '').toUpperCase();
 
+    // Dynamically resolve caller's team lead / management context
+    const [callerProfile] = await pool.query(
+      `SELECT id, team_id, managed_teams, role, permissions FROM staff_users WHERE id = ?`,
+      [callerId]
+    );
+    const callerStaff = callerProfile[0] || {};
+
+    const [leadTeamRows] = await pool.query(
+      `SELECT id FROM teams WHERE lead_id = ?`,
+      [callerId]
+    );
+
+    const leadTeamIds = new Set();
+    leadTeamRows.forEach((t) => leadTeamIds.add(Number(t.id)));
+    if (callerStaff.team_id) leadTeamIds.add(Number(callerStaff.team_id));
+    if (callerStaff.managed_teams) {
+      try {
+        const mt = typeof callerStaff.managed_teams === 'string'
+          ? JSON.parse(callerStaff.managed_teams)
+          : callerStaff.managed_teams;
+        if (Array.isArray(mt)) {
+          mt.forEach((tid) => leadTeamIds.add(Number(tid)));
+        }
+      } catch (_) {}
+    }
+    const teamIdList = [...leadTeamIds].filter(Boolean);
+
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
     const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage');
     const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm');
-    const isLead = !isGM && (['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team'));
+    const isLead = !isGM && (
+      leadTeamIds.size > 0 ||
+      ['LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
+      perms.includes('reports_own_team') ||
+      perms.includes('leaves_lead')
+    );
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
@@ -433,9 +500,14 @@ async function getLeaves(req, res, next) {
       // GM sees all company leaves (except MD)
       where.push("s.role NOT IN ('ADMIN', 'SUPER_ADMIN')");
     } else if (isLead) {
-      // Team lead sees leaves where tl_id = callerId OR employee belongs to team
-      where.push('(la.tl_id = ? OR s.team_id = (SELECT team_id FROM staff_users WHERE id = ?))');
-      params.push(callerId, callerId);
+      // Team lead sees own leaves + leaves assigned to them as TL + leaves of all teammates in lead teams
+      if (teamIdList.length > 0) {
+        where.push(`(la.employee_id = ? OR la.tl_id = ? OR s.team_id IN (${teamIdList.join(',')}))`);
+        params.push(callerId, callerId);
+      } else {
+        where.push('(la.employee_id = ? OR la.tl_id = ?)');
+        params.push(callerId, callerId);
+      }
     } else {
       // Individual employee only sees own leaves
       where.push('la.employee_id = ?');
@@ -449,8 +521,13 @@ async function getLeaves(req, res, next) {
       } else if (isGM) {
         where.push("la.status = 'PENDING_GM'");
       } else if (isLead) {
-        where.push("la.status = 'PENDING_TL' AND (la.tl_id = ? OR s.team_id = (SELECT team_id FROM staff_users WHERE id = ?))");
-        params.push(callerId, callerId);
+        if (teamIdList.length > 0) {
+          where.push(`la.status = 'PENDING_TL' AND (la.tl_id = ? OR s.team_id IN (${teamIdList.join(',')}))`);
+          params.push(callerId);
+        } else {
+          where.push("la.status = 'PENDING_TL' AND la.tl_id = ?");
+          params.push(callerId);
+        }
       }
     } else if (status && status !== 'ALL') {
       where.push('la.status = ?');
