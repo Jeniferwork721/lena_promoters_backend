@@ -25,6 +25,57 @@ function parsePermissions(permissions) {
 }
 
 /**
+ * Normalizes leave application row to guarantee both camelCase and snake_case properties
+ */
+function formatLeaveRow(la) {
+  if (!la) return null;
+  return {
+    ...la,
+    id: la.id,
+    employeeId: la.employee_id,
+    employeeCode: la.employee_code,
+    employeeName: la.employee_name,
+    designation: la.designation || '',
+    department: la.department || '',
+    applicationDate: la.application_date ? String(la.application_date).slice(0, 10) : '',
+    leaveFor: la.leave_for,
+    periodFrom: la.period_from ? String(la.period_from).slice(0, 10) : '',
+    periodTo: la.period_to ? String(la.period_to).slice(0, 10) : '',
+    sessionType: la.session_type || 'FULL_DAY',
+    permissionHours: la.permission_hours != null ? Number(la.permission_hours) : 0,
+    permissionTime: la.permission_time || '',
+    numberOfDays: la.number_of_days != null ? Number(la.number_of_days) : 1.0,
+    alreadyTookLeaveCount: la.already_took_leave_count != null ? Number(la.already_took_leave_count) : 0,
+    alreadyTookPermissionCount: la.already_took_permission_count != null ? Number(la.already_took_permission_count) : 0,
+    reason: la.reason || '',
+    handoverPersonId: la.handover_person_id || null,
+    handoverPersonName: la.handover_person_name || '',
+    handoverWorkDetails: la.handover_work_details || '',
+    employeeSignature: la.employee_signature || '',
+    tlId: la.tl_id || null,
+    tlStatus: la.tl_status || 'PENDING',
+    tlApprovedBy: la.tl_approved_by || null,
+    tlApprovedName: la.tl_approved_name || null,
+    tlComments: la.tl_comments || '',
+    tlActionAt: la.tl_action_at || null,
+    gmId: la.gm_id || null,
+    gmStatus: la.gm_status || 'PENDING',
+    gmApprovedBy: la.gm_approved_by || null,
+    gmApprovedName: la.gm_approved_name || null,
+    gmComments: la.gm_comments || '',
+    gmActionAt: la.gm_action_at || null,
+    hrStatus: la.hr_status || 'PENDING',
+    hrApprovedBy: la.hr_approved_by || null,
+    hrApprovedName: la.hr_approved_name || null,
+    hrComments: la.hr_comments || '',
+    hrActionAt: la.hr_action_at || null,
+    status: la.status,
+    createdAt: la.created_at || '',
+    updatedAt: la.updated_at || '',
+  };
+}
+
+/**
  * Helper to compute leave & permission counts for an employee in a given month (YYYY-MM)
  */
 async function computeMonthlyLeaveUsage(employeeId, monthStr) {
@@ -151,7 +202,7 @@ async function applyLeave(req, res, next) {
     const alreadyTookPermissionCount = usage.permissionsTaken;
 
     // Validate permission hours if leaveFor is PERMISSION
-    let numDays = Number(numberOfDays) || 1.0;
+    let numDays = 1.0;
     let permHours = null;
     if (leaveFor === 'PERMISSION') {
       permHours = Number(permissionHours) || 2.0;
@@ -164,7 +215,20 @@ async function applyLeave(req, res, next) {
       numDays = 0; // Permission does not count as full/half day leave
     } else if (sessionType === 'FIRST_HALF' || sessionType === 'SECOND_HALF') {
       numDays = 0.5;
+    } else {
+      try {
+        const [y1, m1, d1] = String(periodFrom).slice(0, 10).split('-').map(Number);
+        const [y2, m2, d2] = String(toDate).slice(0, 10).split('-').map(Number);
+        const dt1 = new Date(y1, m1 - 1, d1);
+        const dt2 = new Date(y2, m2 - 1, d2);
+        const diff = Math.round((dt2.getTime() - dt1.getTime()) / 86400000) + 1;
+        numDays = diff > 0 ? diff : 1.0;
+      } catch (_) {
+        numDays = Number(numberOfDays) || 1.0;
+      }
     }
+
+    const finalSign = signature || req.body.employeeSignature || staff.name || null;
 
     // Determine 3-tier approval starting stage
     // TL -> GM -> HR
@@ -228,7 +292,7 @@ async function applyLeave(req, res, next) {
         handoverPersonId || null,
         handoverPersonName || null,
         handoverWorkDetails || null,
-        signature || null,
+        finalSign,
         tlId,
         tlStatus,
         gmStatus,
@@ -242,20 +306,33 @@ async function applyLeave(req, res, next) {
     return res.status(201).json({
       success: true,
       message: 'Leave application submitted successfully.',
-      data: {
+      data: formatLeaveRow({
         id: newId,
-        employeeId: callerId,
-        employeeCode: staff.employeeCode,
-        employeeName: staff.name,
-        leaveFor,
-        periodFrom,
-        periodTo: toDate,
-        sessionType,
-        numberOfDays: numDays,
+        employee_id: callerId,
+        employee_code: staff.employeeCode,
+        employee_name: staff.name,
+        designation: staff.designation,
+        department: staff.department,
+        application_date: applicationDate,
+        leave_for: leaveFor,
+        period_from: periodFrom,
+        period_to: toDate,
+        session_type: sessionType,
+        permission_hours: permHours,
+        permission_time: permissionTime,
+        number_of_days: numDays,
         status: initialStatus,
-        alreadyTookLeaveCount,
-        alreadyTookPermissionCount,
-      },
+        already_took_leave_count: alreadyTookLeaveCount,
+        already_took_permission_count: alreadyTookPermissionCount,
+        reason,
+        handover_person_id: handoverPersonId,
+        handover_person_name: handoverPersonName,
+        handover_work_details: handoverWorkDetails,
+        employee_signature: finalSign,
+        tl_status: tlStatus,
+        gm_status: gmStatus,
+        hr_status: hrStatus,
+      }),
     });
   } catch (err) {
     next(err);
@@ -308,7 +385,7 @@ async function getMyLeaves(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      data: rows,
+      data: rows.map(formatLeaveRow),
       quota: currentMonthUsage,
       pagination: {
         total,
@@ -443,7 +520,7 @@ async function getLeaves(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      data: rows,
+      data: rows.map(formatLeaveRow),
       summary: countsRows[0] || {},
       pagination: {
         total,
@@ -478,7 +555,7 @@ async function getLeaveById(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      data: rows[0],
+      data: formatLeaveRow(rows[0]),
     });
   } catch (err) {
     next(err);
@@ -619,13 +696,13 @@ async function approveLeave(req, res, next) {
 
 /**
  * 7. PATCH /leaves/:id/reject
- * Rejects leave application at any stage with remarks
+ * Only HR (or MD) has authority to reject leave applications
  */
 async function rejectLeave(req, res, next) {
   try {
     const leaveId = req.params.id;
     const callerId = req.staff?.id;
-    const callerName = req.staff?.fullName || req.staff?.name || 'Approver';
+    const callerName = req.staff?.fullName || req.staff?.name || 'HR Department';
     const comments = req.body.comments;
 
     if (!comments || !comments.trim()) {
@@ -637,7 +714,13 @@ async function rejectLeave(req, res, next) {
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
     const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage');
-    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm');
+
+    if (!isHR && !isMD) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only Human Resources (HR) or MD has the authority to reject a leave application.',
+      });
+    }
 
     const [rows] = await pool.query('SELECT * FROM leave_applications WHERE id = ?', [leaveId]);
     if (rows.length === 0) {
@@ -645,49 +728,30 @@ async function rejectLeave(req, res, next) {
     }
 
     const leave = rows[0];
+    if (leave.status === 'APPROVED') {
+      return res.status(400).json({ success: false, message: 'Cannot reject a leave that is already approved.' });
+    }
+    if (leave.status === 'REJECTED') {
+      return res.status(400).json({ success: false, message: 'Leave is already rejected.' });
+    }
+
     const now = new Date();
 
-    if (leave.status === 'PENDING_TL') {
-      const isAssignedTL = leave.tl_id && String(leave.tl_id) === String(callerId);
-      if (!isAssignedTL && !isGM && !isHR && !isMD) {
-        return res.status(403).json({ success: false, message: 'Unauthorized to reject this leave.' });
-      }
-
-      await pool.query(
-        `UPDATE leave_applications 
-         SET tl_status = 'REJECTED', tl_approved_by = ?, tl_approved_name = ?, tl_comments = ?, tl_action_at = ?, status = 'REJECTED'
-         WHERE id = ?`,
-        [callerId, callerName, comments.trim(), now, leaveId]
-      );
-    } else if (leave.status === 'PENDING_GM') {
-      if (!isGM && !isHR && !isMD) {
-        return res.status(403).json({ success: false, message: 'Unauthorized to reject this leave.' });
-      }
-
-      await pool.query(
-        `UPDATE leave_applications 
-         SET gm_status = 'REJECTED', gm_approved_by = ?, gm_approved_name = ?, gm_comments = ?, gm_action_at = ?, status = 'REJECTED'
-         WHERE id = ?`,
-        [callerId, callerName, comments.trim(), now, leaveId]
-      );
-    } else if (leave.status === 'PENDING_HR') {
-      if (!isHR && !isMD) {
-        return res.status(403).json({ success: false, message: 'Unauthorized to reject this leave.' });
-      }
-
-      await pool.query(
-        `UPDATE leave_applications 
-         SET hr_status = 'REJECTED', hr_approved_by = ?, hr_approved_name = ?, hr_comments = ?, hr_action_at = ?, status = 'REJECTED'
-         WHERE id = ?`,
-        [callerId, callerName, comments.trim(), now, leaveId]
-      );
-    } else {
-      return res.status(400).json({ success: false, message: `Cannot reject leave with status ${leave.status}.` });
-    }
+    await pool.query(
+      `UPDATE leave_applications 
+       SET hr_status = 'REJECTED',
+           hr_approved_by = ?,
+           hr_approved_name = ?,
+           hr_comments = ?,
+           hr_action_at = ?,
+           status = 'REJECTED'
+       WHERE id = ?`,
+      [callerId, callerName, comments.trim(), now, leaveId]
+    );
 
     return res.status(200).json({
       success: true,
-      message: 'Leave application rejected.',
+      message: 'Leave application rejected by HR.',
       stage: 'REJECTED',
     });
   } catch (err) {

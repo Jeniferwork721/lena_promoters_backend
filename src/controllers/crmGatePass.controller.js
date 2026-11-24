@@ -13,6 +13,39 @@ function parsePermissions(permissions) {
 }
 
 /**
+ * Normalizes gate pass row to guarantee both camelCase and snake_case properties
+ */
+function formatGatePass(gp) {
+  if (!gp) return null;
+  return {
+    ...gp,
+    id: gp.id,
+    passNumber: gp.pass_number || `GP-${gp.id}`,
+    employeeId: gp.employee_id,
+    employeeCode: gp.employee_code,
+    employeeName: gp.employee_name,
+    department: gp.department,
+    date: gp.date ? String(gp.date).slice(0, 10) : '',
+    purpose: gp.purpose,
+    purposeOther: gp.purpose_other || '',
+    reason: gp.reason || '',
+    outTime: gp.out_time || '',
+    expectedReturn: gp.expected_return || '',
+    actualReturnTime: gp.actual_return_time || null,
+    employeeSignature: gp.employee_signature || '',
+    approvalStatus: gp.approval_status,
+    approvedById: gp.approved_by_id || null,
+    approvedByName: gp.approved_by_name || null,
+    approvedAt: gp.approved_at || null,
+    returnRecordedAt: gp.return_recorded_at || null,
+    returnRecordedBy: gp.return_recorded_by || null,
+    returnRecordedName: gp.return_recorded_name || null,
+    remarks: gp.remarks || '',
+    createdAt: gp.created_at || '',
+  };
+}
+
+/**
  * Generate unique Gate Pass Number: GP-YYYYMM-XXXX
  */
 async function generateNextGatePassNumber() {
@@ -68,16 +101,39 @@ async function applyGatePass(req, res, next) {
       outTime,
       expectedReturn,
       signature,
+      employeeSignature,
       date,
     } = req.body;
 
-    if (!purpose || !reason || !outTime || !expectedReturn) {
+    if (!purpose || !reason || !outTime) {
       return res.status(400).json({
         success: false,
-        message: 'Purpose, reason, outTime, and expectedReturn are required for a gate pass.',
+        message: 'Purpose, reason, and outTime are required for a gate pass.',
       });
     }
 
+    // Strict 15-minute enforcement for PERSONAL_WORK
+    let finalExpectedReturn = expectedReturn;
+    if (purpose === 'PERSONAL_WORK') {
+      try {
+        const outParts = String(outTime).split(':').map(Number);
+        const outMin = (outParts[0] || 0) * 60 + (outParts[1] || 0);
+        // Strictly lock to outTime + 15 mins
+        const retMin = (outMin + 15) % (24 * 60);
+        const rh = String(Math.floor(retMin / 60)).padStart(2, '0');
+        const rm = String(retMin % 60).padStart(2, '0');
+        finalExpectedReturn = `${rh}:${rm}`;
+      } catch (_) {
+        finalExpectedReturn = expectedReturn;
+      }
+    } else if (!finalExpectedReturn) {
+      return res.status(400).json({
+        success: false,
+        message: 'Expected return time is required.',
+      });
+    }
+
+    const finalSign = signature || employeeSignature || staff.name || null;
     const passNumber = await generateNextGatePassNumber();
     const passDate = date || new Date().toISOString().slice(0, 10);
     const dept = department || staff.department || 'Other';
@@ -99,17 +155,31 @@ async function applyGatePass(req, res, next) {
         purposeOther || null,
         reason,
         outTime,
-        expectedReturn,
-        signature || null,
+        finalExpectedReturn,
+        finalSign,
       ]
     );
 
     return res.status(201).json({
       success: true,
       message: 'Gate pass requested successfully.',
-      data: {
+      data: formatGatePass({
         id: result.insertId,
-        passNumber,
+        pass_number: passNumber,
+        employee_id: callerId,
+        employee_code: staff.employeeCode,
+        employee_name: staff.name,
+        department: dept,
+        date: passDate,
+        purpose,
+        purpose_other: purposeOther || '',
+        reason,
+        out_time: outTime,
+        expected_return: finalExpectedReturn,
+        employee_signature: finalSign,
+        approval_status: 'PENDING',
+      }),
+    });
         employeeName: staff.name,
         employeeCode: staff.employeeCode,
         department: dept,
@@ -164,7 +234,7 @@ async function getMyGatePasses(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      data: rows,
+      data: rows.map(formatGatePass),
       pagination: {
         total,
         page,
@@ -269,7 +339,7 @@ async function getGatePasses(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      data: rows,
+      data: rows.map(formatGatePass),
       summary: countsRows[0] || {},
       pagination: {
         total,
@@ -301,7 +371,7 @@ async function getGatePassById(req, res, next) {
       return res.status(404).json({ success: false, message: 'Gate pass not found' });
     }
 
-    return res.status(200).json({ success: true, data: rows[0] });
+    return res.status(200).json({ success: true, data: formatGatePass(rows[0]) });
   } catch (err) {
     next(err);
   }
