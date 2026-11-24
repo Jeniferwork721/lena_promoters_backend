@@ -180,16 +180,6 @@ async function applyGatePass(req, res, next) {
         approval_status: 'PENDING',
       }),
     });
-        employeeName: staff.name,
-        employeeCode: staff.employeeCode,
-        department: dept,
-        date: passDate,
-        purpose,
-        outTime,
-        expectedReturn,
-        approvalStatus: 'PENDING',
-      },
-    });
   } catch (err) {
     next(err);
   }
