@@ -583,9 +583,9 @@ async function getLeaves(req, res, next) {
       params.push(department);
     }
 
-    if (month) {
-      where.push("DATE_FORMAT(la.period_from, '%Y-%m') = ?");
-      params.push(month);
+    if (month && month !== 'ALL') {
+      where.push("(DATE_FORMAT(la.period_from, '%Y-%m') = ? OR DATE_FORMAT(la.period_to, '%Y-%m') = ? OR DATE_FORMAT(la.application_date, '%Y-%m') = ?)");
+      params.push(month, month, month);
     }
 
     if (from) {
@@ -599,8 +599,8 @@ async function getLeaves(req, res, next) {
 
     if (q && q.trim()) {
       const term = `%${q.trim()}%`;
-      where.push('(la.employee_name LIKE ? OR la.employee_code LIKE ? OR la.reason LIKE ?)');
-      params.push(term, term, term);
+      where.push('(la.employee_name LIKE ? OR la.employee_code LIKE ? OR la.reason LIKE ? OR la.department LIKE ? OR la.designation LIKE ?)');
+      params.push(term, term, term, term, term);
     }
 
     const whereSql = `WHERE ${where.join(' AND ')}`;
@@ -1011,8 +1011,8 @@ async function getMonthlyLeaveSummary(req, res, next) {
       staffParams.push(department);
     }
     if (q && q.trim()) {
-      staffWhere.push('(s.full_name LIKE ? OR s.employee_id LIKE ?)');
-      staffParams.push(`%${q.trim()}%`, `%${q.trim()}%`);
+      staffWhere.push('(s.full_name LIKE ? OR s.employee_id LIKE ? OR s.department LIKE ? OR s.designation LIKE ?)');
+      staffParams.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
     }
 
     const staffWhereSql = staffWhere.length > 0 ? `WHERE ${staffWhere.join(' AND ')}` : '';

@@ -196,7 +196,7 @@ async function getMyGatePasses(req, res, next) {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const offset = (page - 1) * limit;
 
-    const { status, date } = req.query;
+    const { status, date, month } = req.query;
     let where = ['employee_id = ?'];
     let params = [callerId];
 
@@ -207,6 +207,10 @@ async function getMyGatePasses(req, res, next) {
     if (date) {
       where.push('date = ?');
       params.push(date);
+    }
+    if (month && month !== 'ALL') {
+      where.push("DATE_FORMAT(date, '%Y-%m') = ?");
+      params.push(month);
     }
 
     const whereSql = `WHERE ${where.join(' AND ')}`;
@@ -287,7 +291,7 @@ async function getGatePasses(req, res, next) {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const offset = (page - 1) * limit;
 
-    const { status, purpose, department, date, q } = req.query;
+    const { status, purpose, department, date, month, q } = req.query;
 
     let where = ['1=1'];
     let params = [];
@@ -324,6 +328,10 @@ async function getGatePasses(req, res, next) {
     if (date) {
       where.push('gp.date = ?');
       params.push(date);
+    }
+    if (month && month !== 'ALL') {
+      where.push("DATE_FORMAT(gp.date, '%Y-%m') = ?");
+      params.push(month);
     }
     if (q && q.trim()) {
       const term = `%${q.trim()}%`;
