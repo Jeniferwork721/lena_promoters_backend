@@ -233,8 +233,8 @@ async function createReport(req, res, next) {
     if (callLogId) {
       try {
         await pool.query(
-          'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = ? WHERE id = ?',
-          [`rep_${reportId}`, callLogId]
+          'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = ? WHERE id = ? AND staff_id = ?',
+          [`rep_${reportId}`, callLogId, employeeId]
         );
       } catch (_) {}
     } else if (cleanContact && employeeId) {
@@ -930,8 +930,8 @@ async function updateReport(req, res, next) {
     if (callLogId) {
       try {
         await pool.query(
-          'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = ? WHERE id = ?',
-          [`rep_${reportId}`, callLogId]
+          'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = ? WHERE id = ? AND staff_id = ?',
+          [`rep_${reportId}`, callLogId, req.staff?.id]
         );
       } catch (_) {}
     }

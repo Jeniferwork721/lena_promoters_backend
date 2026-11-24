@@ -572,13 +572,26 @@ async function markCallLogLogged(req, res, next) {
 
     const id = req.params.id;
     const reportId = req.body?.reportId ? String(req.body.reportId).slice(0, 64) : null;
+    const callerId = req.staff?.id;
+    const isMD = req.staff?.role === 'MD' || req.staff?.role === 'ADMIN';
 
-    const [result] = await pool.query(
-      'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = COALESCE(?, crm_report_id) WHERE id = ?',
-      [reportId, id]
-    );
+    let updateSql = 'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = COALESCE(?, crm_report_id) WHERE id = ?';
+    let updateParams = [reportId, id];
+    if (!isMD && callerId) {
+      updateSql += ' AND staff_id = ?';
+      updateParams.push(callerId);
+    }
+
+    const [result] = await pool.query(updateSql, updateParams);
 
     if (result.affectedRows === 0) {
+      const [existing] = await pool.query('SELECT staff_id FROM staff_call_logs WHERE id = ? LIMIT 1', [id]);
+      if (existing.length > 0 && String(existing[0].staff_id) !== String(callerId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only the employee who received or made this call can add it to call entry.',
+        });
+      }
       return res.status(404).json({ success: false, message: 'Call log not found.' });
     }
 
