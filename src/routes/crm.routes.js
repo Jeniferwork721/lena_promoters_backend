@@ -12,6 +12,8 @@ const crmDashboard = require('../controllers/crmDashboard.controller');
 const crmConfig = require('../controllers/crmConfig.controller');
 const crmCallLog = require('../controllers/crmCallLog.controller');
 const crmGreetings = require('../controllers/crmGreetings.controller');
+const crmLeave = require('../controllers/crmLeave.controller');
+const crmGatePass = require('../controllers/crmGatePass.controller');
 const authController = require('../controllers/auth.controller');
 
 // All CRM endpoints require staff token authentication
@@ -105,5 +107,28 @@ router.delete('/call-logs/clear-old', requireMD, crmCallLog.clearOldCallLogs);
 router.get('/greetings/today', crmGreetings.getTodayCelebrations);
 router.post('/greetings/trigger', requireMD, crmGreetings.triggerDailyGreetings);
 router.post('/greetings/send-single', requireMD, crmGreetings.sendSingleGreeting);
+
+// ==========================================================
+// 13. LEAVE APPLICATIONS & PERMISSIONS (3-Tier: Staff -> TL -> GM -> HR)
+// ==========================================================
+router.get('/leaves/quota', crmLeave.getLeaveQuota);
+router.post('/leaves', crmLeave.applyLeave);
+router.get('/leaves/my', crmLeave.getMyLeaves);
+router.get('/leaves', crmLeave.getLeaves);
+router.get('/leaves/:id', crmLeave.getLeaveById);
+router.patch('/leaves/:id/approve', crmLeave.approveLeave);
+router.patch('/leaves/:id/reject', crmLeave.rejectLeave);
+router.patch('/leaves/:id/cancel', crmLeave.cancelLeave);
+
+// ==========================================================
+// 14. GATE PASSES (Official/Field Work/Emergency/Personal exit)
+// ==========================================================
+router.post('/gate-passes', crmGatePass.applyGatePass);
+router.get('/gate-passes/my', crmGatePass.getMyGatePasses);
+router.get('/gate-passes', crmGatePass.getGatePasses);
+router.get('/gate-passes/:id', crmGatePass.getGatePassById);
+router.patch('/gate-passes/:id/approve', crmGatePass.approveGatePass);
+router.patch('/gate-passes/:id/reject', crmGatePass.rejectGatePass);
+router.patch('/gate-passes/:id/return', crmGatePass.recordReturn);
 
 module.exports = router;

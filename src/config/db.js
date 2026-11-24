@@ -1104,6 +1104,96 @@ async function initializeDatabase() {
     `);
     console.log('🎉 Verified automated_greeting_logs table in DB');
 
+    // 19. Leave Applications Table (3-tier approval: Staff -> TL -> GM -> HR)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`leave_applications\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`employee_id\` INT NOT NULL,
+        \`employee_code\` VARCHAR(50) NOT NULL,
+        \`employee_name\` VARCHAR(150) NOT NULL,
+        \`designation\` VARCHAR(150) NULL,
+        \`department\` VARCHAR(100) NULL,
+        \`application_date\` DATE NOT NULL,
+        \`leave_for\` VARCHAR(50) NOT NULL,
+        \`period_from\` DATE NOT NULL,
+        \`period_to\` DATE NOT NULL,
+        \`session_type\` VARCHAR(30) NOT NULL DEFAULT 'FULL_DAY',
+        \`permission_hours\` DECIMAL(3,1) NULL DEFAULT NULL,
+        \`permission_time\` VARCHAR(50) NULL DEFAULT NULL,
+        \`number_of_days\` DECIMAL(4,1) NOT NULL DEFAULT 1.0,
+        \`already_took_leave_count\` DECIMAL(4,1) NOT NULL DEFAULT 0.0,
+        \`already_took_permission_count\` INT NOT NULL DEFAULT 0,
+        \`reason\` TEXT NOT NULL,
+        \`handover_person_id\` INT NULL,
+        \`handover_person_name\` VARCHAR(150) NULL,
+        \`handover_work_details\` TEXT NULL,
+        \`employee_signature\` VARCHAR(255) NULL,
+        \`tl_id\` INT NULL,
+        \`tl_status\` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+        \`tl_approved_by\` INT NULL,
+        \`tl_approved_name\` VARCHAR(150) NULL,
+        \`tl_comments\` TEXT NULL,
+        \`tl_action_at\` DATETIME NULL,
+        \`gm_id\` INT NULL,
+        \`gm_status\` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+        \`gm_approved_by\` INT NULL,
+        \`gm_approved_name\` VARCHAR(150) NULL,
+        \`gm_comments\` TEXT NULL,
+        \`gm_action_at\` DATETIME NULL,
+        \`hr_status\` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+        \`hr_approved_by\` INT NULL,
+        \`hr_approved_name\` VARCHAR(150) NULL,
+        \`hr_comments\` TEXT NULL,
+        \`hr_action_at\` DATETIME NULL,
+        \`status\` VARCHAR(30) NOT NULL DEFAULT 'PENDING_TL',
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_leave_employee\` (\`employee_id\`),
+        INDEX \`idx_leave_status\` (\`status\`),
+        INDEX \`idx_leave_dates\` (\`application_date\`, \`period_from\`, \`period_to\`),
+        INDEX \`idx_leave_tl\` (\`tl_id\`, \`tl_status\`),
+        INDEX \`idx_leave_gm\` (\`gm_id\`, \`gm_status\`),
+        INDEX \`idx_leave_hr\` (\`hr_status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    console.log('📋 Verified leave_applications table in DB');
+
+    // 20. Gate Passes Table (Official/Field Work/Emergency/Personal exit from office)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`gate_passes\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`pass_number\` VARCHAR(50) NOT NULL UNIQUE,
+        \`employee_id\` INT NOT NULL,
+        \`employee_code\` VARCHAR(50) NOT NULL,
+        \`employee_name\` VARCHAR(150) NOT NULL,
+        \`department\` VARCHAR(100) NOT NULL,
+        \`date\` DATE NOT NULL,
+        \`purpose\` VARCHAR(50) NOT NULL,
+        \`purpose_other\` VARCHAR(150) NULL,
+        \`reason\` TEXT NOT NULL,
+        \`out_time\` VARCHAR(30) NOT NULL,
+        \`expected_return\` VARCHAR(30) NOT NULL,
+        \`actual_return_time\` VARCHAR(30) NULL,
+        \`employee_signature\` VARCHAR(255) NULL,
+        \`approval_status\` VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+        \`approved_by_id\` INT NULL,
+        \`approved_by_name\` VARCHAR(150) NULL,
+        \`approved_at\` DATETIME NULL,
+        \`security_out_by\` INT NULL,
+        \`security_out_at\` DATETIME NULL,
+        \`return_recorded_at\` DATETIME NULL,
+        \`return_recorded_by\` INT NULL,
+        \`return_recorded_name\` VARCHAR(150) NULL,
+        \`remarks\` TEXT NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_gatepass_emp\` (\`employee_id\`),
+        INDEX \`idx_gatepass_status\` (\`approval_status\`),
+        INDEX \`idx_gatepass_date\` (\`date\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    console.log('🚪 Verified gate_passes table in DB');
+
     // Ensure call_log_tracking_since column exists on staff_users (upcoming-only call log anchor timestamp)
     try {
       const [trackingCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'call_log_tracking_since'");
