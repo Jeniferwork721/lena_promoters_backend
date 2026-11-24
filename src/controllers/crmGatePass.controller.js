@@ -12,6 +12,29 @@ function parsePermissions(permissions) {
   return [];
 }
 
+function formatDateToYmd(d) {
+  if (!d) return '';
+  if (d instanceof Date) {
+    if (isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  const s = String(d).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return s.slice(0, 10);
+  }
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  return s;
+}
+
 /**
  * Normalizes gate pass row to guarantee both camelCase and snake_case properties
  */
@@ -25,7 +48,7 @@ function formatGatePass(gp) {
     employeeCode: gp.employee_code,
     employeeName: gp.employee_name,
     department: gp.department,
-    date: gp.date ? String(gp.date).slice(0, 10) : '',
+    date: formatDateToYmd(gp.date),
     purpose: gp.purpose,
     purposeOther: gp.purpose_other || '',
     reason: gp.reason || '',

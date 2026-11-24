@@ -24,14 +24,37 @@ function parsePermissions(permissions) {
   return [];
 }
 
+function formatDateToYmd(d) {
+  if (!d) return '';
+  if (d instanceof Date) {
+    if (isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  const s = String(d).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return s.slice(0, 10);
+  }
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  return s;
+}
+
 /**
  * Normalizes leave application row to guarantee both camelCase and snake_case properties
  */
 function formatLeaveRow(la) {
   if (!la) return null;
-  const appDate = la.application_date ? String(la.application_date).slice(0, 10) : '';
-  const fromDate = la.period_from ? String(la.period_from).slice(0, 10) : '';
-  const toDate = la.period_to ? String(la.period_to).slice(0, 10) : '';
+  const appDate = formatDateToYmd(la.application_date);
+  const fromDate = formatDateToYmd(la.period_from);
+  const toDate = formatDateToYmd(la.period_to);
   const numDays = la.number_of_days != null ? Number(la.number_of_days) : 1.0;
   const permHours = la.permission_hours != null ? Number(la.permission_hours) : 0;
   const leaveCount = la.already_took_leave_count != null ? Number(la.already_took_leave_count) : 0;
