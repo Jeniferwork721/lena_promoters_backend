@@ -112,6 +112,7 @@ router.post('/greetings/send-single', requireMD, crmGreetings.sendSingleGreeting
 // 13. LEAVE APPLICATIONS & PERMISSIONS (3-Tier: Staff -> TL -> GM -> HR)
 // ==========================================================
 router.get('/leaves/quota', crmLeave.getLeaveQuota);
+router.get('/leaves/monthly-summary', crmLeave.getMonthlyLeaveSummary);
 router.post('/leaves', crmLeave.applyLeave);
 router.get('/leaves/my', crmLeave.getMyLeaves);
 router.get('/leaves', crmLeave.getLeaves);

@@ -933,8 +933,236 @@ async function cancelLeave(req, res, next) {
   }
 }
 
+/**
+ * 9. GET /leaves/monthly-summary
+ * Returns monthly leave & permission quota usage for every employee in caller's scope
+ * - 4 paid leaves per month limit
+ * - 2 permissions per month limit (max 2h each)
+ * - Computes paid leaves taken, balance, permissions taken, balance, unpaid/excess, gatepasses
+ */
+async function getMonthlyLeaveSummary(req, res, next) {
+  try {
+    const callerId = req.staff?.id;
+    const perms = parsePermissions(req.staff?.permissions);
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+
+    const [callerProfile] = await pool.query(
+      `SELECT id, team_id, managed_teams, role, permissions FROM staff_users WHERE id = ?`,
+      [callerId]
+    );
+    const callerStaff = callerProfile[0] || {};
+
+    const [leadTeamRows] = await pool.query(
+      `SELECT id FROM teams WHERE lead_id = ?`,
+      [callerId]
+    );
+
+    const leadTeamIds = new Set();
+    leadTeamRows.forEach((t) => leadTeamIds.add(Number(t.id)));
+    if (callerStaff.team_id) leadTeamIds.add(Number(callerStaff.team_id));
+    if (callerStaff.managed_teams) {
+      try {
+        const mt = typeof callerStaff.managed_teams === 'string'
+          ? JSON.parse(callerStaff.managed_teams)
+          : callerStaff.managed_teams;
+        if (Array.isArray(mt)) {
+          mt.forEach((tid) => leadTeamIds.add(Number(tid)));
+        }
+      } catch (_) {}
+    }
+    const teamIdList = [...leadTeamIds].filter(Boolean);
+
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
+    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage');
+    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm');
+    const isLead = !isGM && (
+      leadTeamIds.size > 0 ||
+      ['LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
+      perms.includes('reports_own_team') ||
+      perms.includes('leaves_lead')
+    );
+
+    const targetMonth = req.query.month || getCurrentMonthString();
+    const department = req.query.department;
+    const q = req.query.q;
+
+    let staffWhere = ["s.is_active = 1 AND s.role NOT IN ('ADMIN', 'SUPER_ADMIN')"];
+    let staffParams = [];
+
+    if (isHR || isMD) {
+      // HR/MD sees all active staff
+    } else if (isGM) {
+      // GM sees company staff
+    } else if (isLead) {
+      if (teamIdList.length > 0) {
+        staffWhere.push(`(s.id = ? OR s.team_id IN (${teamIdList.join(',')}))`);
+        staffParams.push(callerId);
+      } else {
+        staffWhere.push('s.id = ?');
+        staffParams.push(callerId);
+      }
+    } else {
+      staffWhere.push('s.id = ?');
+      staffParams.push(callerId);
+    }
+
+    if (department && department !== 'ALL') {
+      staffWhere.push('s.department = ?');
+      staffParams.push(department);
+    }
+    if (q && q.trim()) {
+      staffWhere.push('(s.full_name LIKE ? OR s.employee_id LIKE ?)');
+      staffParams.push(`%${q.trim()}%`, `%${q.trim()}%`);
+    }
+
+    const staffWhereSql = staffWhere.length > 0 ? `WHERE ${staffWhere.join(' AND ')}` : '';
+    const [staffList] = await pool.query(
+      `SELECT s.id, s.employee_id as employeeCode, s.full_name as name, s.department, s.designation, s.role
+       FROM staff_users s
+       ${staffWhereSql}
+       ORDER BY s.full_name ASC`,
+      staffParams
+    );
+
+    if (staffList.length === 0) {
+      return res.status(200).json({
+        success: true,
+        month: targetMonth,
+        data: [],
+        summary: { totalStaff: 0, totalPaidTaken: 0, totalPermTaken: 0, totalGatePasses: 0 },
+      });
+    }
+
+    const staffIds = staffList.map((s) => s.id);
+
+    // Query leaves for targetMonth
+    const [leaveRows] = await pool.query(
+      `SELECT 
+         employee_id,
+         leave_for,
+         number_of_days,
+         permission_hours,
+         status
+       FROM leave_applications
+       WHERE employee_id IN (?)
+         AND DATE_FORMAT(period_from, '%Y-%m') = ?
+         AND status NOT IN ('REJECTED', 'CANCELLED')`,
+      [staffIds, targetMonth]
+    );
+
+    // Query gate passes for targetMonth
+    const [gpRows] = await pool.query(
+      `SELECT
+         employee_id,
+         purpose,
+         approval_status
+       FROM gate_passes
+       WHERE employee_id IN (?)
+         AND DATE_FORMAT(date, '%Y-%m') = ?
+         AND approval_status NOT IN ('REJECTED', 'CANCELLED')`,
+      [staffIds, targetMonth]
+    );
+
+    const leaveMap = {};
+    leaveRows.forEach((r) => {
+      const eid = r.employee_id;
+      if (!leaveMap[eid]) {
+        leaveMap[eid] = {
+          paidLeavesTaken: 0,
+          permissionsTaken: 0,
+          permissionHoursTotal: 0,
+          unpaidLeavesTaken: 0,
+          leaveRecordsCount: 0,
+        };
+      }
+      leaveMap[eid].leaveRecordsCount += 1;
+      if (r.leave_for === 'PERMISSION') {
+        leaveMap[eid].permissionsTaken += 1;
+        leaveMap[eid].permissionHoursTotal += Number(r.permission_hours || 0);
+      } else if (['UNPAID', 'UNPAID_LEAVE', 'LOP'].includes(String(r.leave_for).toUpperCase())) {
+        leaveMap[eid].unpaidLeavesTaken += Number(r.number_of_days || 0);
+      } else {
+        leaveMap[eid].paidLeavesTaken += Number(r.number_of_days || 0);
+      }
+    });
+
+    const gpMap = {};
+    gpRows.forEach((r) => {
+      const eid = r.employee_id;
+      if (!gpMap[eid]) {
+        gpMap[eid] = {
+          gatePassesCount: 0,
+          officialWorkCount: 0,
+          personalWorkCount: 0,
+          emergencyCount: 0,
+        };
+      }
+      gpMap[eid].gatePassesCount += 1;
+      if (r.purpose === 'OFFICIAL_WORK') gpMap[eid].officialWorkCount += 1;
+      else if (r.purpose === 'PERSONAL_WORK') gpMap[eid].personalWorkCount += 1;
+      else if (r.purpose === 'EMERGENCY') gpMap[eid].emergencyCount += 1;
+    });
+
+    let sumPaidTaken = 0;
+    let sumPermTaken = 0;
+    let sumGatePasses = 0;
+
+    const data = staffList.map((s) => {
+      const lm = leaveMap[s.id] || { paidLeavesTaken: 0, permissionsTaken: 0, permissionHoursTotal: 0, unpaidLeavesTaken: 0, leaveRecordsCount: 0 };
+      const gm = gpMap[s.id] || { gatePassesCount: 0, officialWorkCount: 0, personalWorkCount: 0, emergencyCount: 0 };
+
+      const paidTaken = Number(lm.paidLeavesTaken.toFixed(1));
+      const paidRemaining = Number(Math.max(0, MAX_PAID_LEAVES_PER_MONTH - paidTaken).toFixed(1));
+      const permTaken = lm.permissionsTaken;
+      const permRemaining = Math.max(0, MAX_PERMISSIONS_PER_MONTH - permTaken);
+      const unpaid = Number((lm.unpaidLeavesTaken + Math.max(0, paidTaken - MAX_PAID_LEAVES_PER_MONTH)).toFixed(1));
+
+      sumPaidTaken += paidTaken;
+      sumPermTaken += permTaken;
+      sumGatePasses += gm.gatePassesCount;
+
+      return {
+        id: s.id,
+        employeeCode: s.employeeCode || `EMP${s.id}`,
+        name: s.name,
+        department: s.department || 'General',
+        designation: s.designation || 'Staff',
+        paidLeavesLimit: MAX_PAID_LEAVES_PER_MONTH,
+        paidLeavesTaken: paidTaken,
+        paidLeavesRemaining: paidRemaining,
+        permissionsLimit: MAX_PERMISSIONS_PER_MONTH,
+        permissionsTaken: permTaken,
+        permissionsRemaining: permRemaining,
+        permissionHoursTotal: Number(lm.permissionHoursTotal.toFixed(1)),
+        unpaidLeavesTaken: unpaid,
+        gatePassesCount: gm.gatePassesCount,
+        officialWorkCount: gm.officialWorkCount,
+        personalWorkCount: gm.personalWorkCount,
+        emergencyCount: gm.emergencyCount,
+        leaveRecordsCount: lm.leaveRecordsCount,
+        isOverLimit: paidTaken > MAX_PAID_LEAVES_PER_MONTH || permTaken > MAX_PERMISSIONS_PER_MONTH,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      month: targetMonth,
+      data,
+      summary: {
+        totalStaff: staffList.length,
+        totalPaidTaken: Number(sumPaidTaken.toFixed(1)),
+        totalPermTaken: sumPermTaken,
+        totalGatePasses: sumGatePasses,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getLeaveQuota,
+  getMonthlyLeaveSummary,
   applyLeave,
   getMyLeaves,
   getLeaves,
