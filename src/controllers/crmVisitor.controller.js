@@ -162,8 +162,9 @@ async function getCallerStaff(staffId) {
 
   const isMD = roleUpper === 'MD' || roleUpper === 'ADMIN' || roleUpper === 'SUPER_ADMIN' || perms.includes('*');
   const isManager = isMD || roleUpper === 'SALES_HEAD' || roleUpper === 'GENERAL_MANAGER' ||
-                    desig.includes('manager') || desig.includes('head') || perms.includes('visitors_manage');
-  const isFrontOffice = isManager || perms.includes('visitors_front_office');
+                    desig.includes('manager') || desig.includes('head') ||
+                    perms.includes('visitors_manage') || perms.includes('visitors') || perms.includes('visitor_management') || perms.includes('visitor');
+  const isFrontOffice = isManager || perms.includes('visitors_front_office') || perms.includes('front_office') || perms.includes('visitor_desk');
 
   return {
     ...staff,
