@@ -40,7 +40,7 @@ async function getEmployees(req, res, next) {
 
     const { teamId, leadId, unassigned, q } = req.query;
 
-    let whereConditions = ['s.is_active = 1', "s.role NOT IN ('ADMIN', 'SUPER_ADMIN')"];
+    let whereConditions = ['s.is_active = 1'];
     let params = [];
 
     // Role-based scoping
