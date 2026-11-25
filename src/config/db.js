@@ -1213,6 +1213,71 @@ async function initializeDatabase() {
     `);
     console.log('🚪 Verified gate_passes table in DB');
 
+    // 21. Visitors Table (Front Office Desk & Management Follow-up Tickets)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`visitors\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`visitor_id\` VARCHAR(64) NOT NULL UNIQUE,
+        \`ticket_id\` VARCHAR(64) NOT NULL UNIQUE,
+        \`name\` VARCHAR(150) NOT NULL,
+        \`mobile_number\` VARCHAR(20) NOT NULL,
+        \`purpose_of_visit\` VARCHAR(60) NOT NULL,
+        \`person_to_meet\` VARCHAR(150) NOT NULL,
+        \`person_to_meet_id\` INT NULL,
+        \`branch_id\` INT NULL,
+        \`branch_name\` VARCHAR(100) NOT NULL,
+        \`referred_by\` VARCHAR(150) NULL,
+        \`refreshment_status\` ENUM('Accepted', 'Refused', 'Not Offered') NOT NULL DEFAULT 'Not Offered',
+        \`initial_remarks\` TEXT NULL,
+        \`registered_by_id\` INT NOT NULL,
+        \`registered_by_name\` VARCHAR(150) NOT NULL,
+        \`visit_date\` DATE NOT NULL,
+        \`visit_time\` VARCHAR(20) NOT NULL,
+        \`ticket_status\` ENUM('Open', 'In Progress', 'Follow-up Required', 'Completed', 'Closed') NOT NULL DEFAULT 'Open',
+        \`conclusion\` VARCHAR(60) NULL,
+        \`conclusion_remarks\` TEXT NULL,
+        \`follow_up_date\` DATE NULL,
+        \`site_visit_date\` DATE NULL,
+        \`interview_date\` DATE NULL,
+        \`closed_at\` DATETIME NULL,
+        \`closed_by_id\` INT NULL,
+        \`closed_by_name\` VARCHAR(150) NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_visitor_mobile\` (\`mobile_number\`),
+        INDEX \`idx_visitor_branch\` (\`branch_name\`),
+        INDEX \`idx_visitor_date\` (\`visit_date\`),
+        INDEX \`idx_visitor_status\` (\`ticket_status\`),
+        INDEX \`idx_visitor_purpose\` (\`purpose_of_visit\`),
+        INDEX \`idx_visitor_conclusion\` (\`conclusion\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    console.log('👥 Verified visitors table in DB');
+
+    // 22. Visitor Ticket History Table (Activity Audit Log)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`visitor_ticket_history\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`visitor_id\` INT NOT NULL,
+        \`ticket_id\` VARCHAR(64) NOT NULL,
+        \`action\` VARCHAR(50) NOT NULL,
+        \`old_status\` VARCHAR(50) NULL,
+        \`new_status\` VARCHAR(50) NOT NULL,
+        \`conclusion\` VARCHAR(60) NULL,
+        \`remarks\` TEXT NOT NULL,
+        \`follow_up_date\` DATE NULL,
+        \`site_visit_date\` DATE NULL,
+        \`interview_date\` DATE NULL,
+        \`updated_by_id\` INT NOT NULL,
+        \`updated_by_name\` VARCHAR(150) NOT NULL,
+        \`updated_by_role\` VARCHAR(50) NOT NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX \`idx_vth_visitor\` (\`visitor_id\`),
+        INDEX \`idx_vth_ticket\` (\`ticket_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    console.log('🎫 Verified visitor_ticket_history table in DB');
+
     // Ensure call_log_tracking_since column exists on staff_users (upcoming-only call log anchor timestamp)
     try {
       const [trackingCol] = await connection.query("SHOW COLUMNS FROM `staff_users` LIKE 'call_log_tracking_since'");

@@ -14,6 +14,7 @@ const crmCallLog = require('../controllers/crmCallLog.controller');
 const crmGreetings = require('../controllers/crmGreetings.controller');
 const crmLeave = require('../controllers/crmLeave.controller');
 const crmGatePass = require('../controllers/crmGatePass.controller');
+const crmVisitor = require('../controllers/crmVisitor.controller');
 const authController = require('../controllers/auth.controller');
 
 // All CRM endpoints require staff token authentication
@@ -131,5 +132,15 @@ router.get('/gate-passes/:id', crmGatePass.getGatePassById);
 router.patch('/gate-passes/:id/approve', crmGatePass.approveGatePass);
 router.patch('/gate-passes/:id/reject', crmGatePass.rejectGatePass);
 router.patch('/gate-passes/:id/return', crmGatePass.recordReturn);
+
+// ==========================================================
+// 15. VISITOR MANAGEMENT & TICKETS (Front Office Desk & Management)
+// ==========================================================
+router.post('/visitors', crmVisitor.registerVisitor);
+router.get('/visitors', crmVisitor.getVisitors);
+router.get('/visitors/reports/summary', crmVisitor.getVisitorSummaryReport);
+router.get('/visitors/:id', crmVisitor.getVisitorById);
+router.patch('/visitors/:id/conclusion', crmVisitor.updateVisitorConclusion);
+router.patch('/visitors/:id/close', crmVisitor.closeVisitorTicket);
 
 module.exports = router;
