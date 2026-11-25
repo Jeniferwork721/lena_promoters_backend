@@ -498,11 +498,11 @@ async function updateVisitorConclusion(req, res) {
       return res.status(404).json({ success: false, message: 'Staff user profile not found' });
     }
 
-    // Business Rule: Front Office staff cannot update management conclusions
-    if (!caller.isManager && !caller.isMD) {
+    // Business Rule: Front Office staff, Managers, and MD can conclude and update visitor tickets
+    if (!caller.isFrontOffice && !caller.isManager && !caller.isMD) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied: Only Managers and MD can update visitor conclusions and ticket status',
+        message: 'Access denied: You do not have permission to update visitor conclusions',
       });
     }
 
@@ -514,9 +514,9 @@ async function updateVisitorConclusion(req, res) {
 
     const visitor = rows[0];
 
-    // Branch check for managers
-    if (!caller.isMD && visitor.branch_name !== caller.branch) {
-      return res.status(403).json({ success: false, message: 'Access denied: You can only manage visitors from your branch' });
+    // Branch check for non-MD
+    if (!caller.isMD && visitor.branch_name && caller.branch && visitor.branch_name !== caller.branch) {
+      return res.status(403).json({ success: false, message: `Access denied: You can only manage visitors from your branch (${caller.branch})` });
     }
 
     const {
@@ -599,7 +599,7 @@ async function updateVisitorConclusion(req, res) {
         finalInterviewDate,
         caller.id,
         caller.full_name,
-        caller.isMD ? 'MD' : (caller.role || 'Manager'),
+        caller.isMD ? 'MD' : (caller.isFrontOffice ? 'Front Office' : (caller.role || 'Staff')),
       ]
     );
 
@@ -617,7 +617,7 @@ async function updateVisitorConclusion(req, res) {
 
 /**
  * 5. PATCH /visitors/:id/close
- * Close a completed ticket (Management only)
+ * Close a completed ticket (Front Office, Managers, or MD)
  */
 async function closeVisitorTicket(req, res) {
   try {
@@ -631,11 +631,11 @@ async function closeVisitorTicket(req, res) {
       return res.status(404).json({ success: false, message: 'Staff user profile not found' });
     }
 
-    // Business Rule: Front Office staff cannot close tickets
-    if (!caller.isManager && !caller.isMD) {
+    // Business Rule: Front Office staff, Managers, and MD can close visitor tickets
+    if (!caller.isFrontOffice && !caller.isManager && !caller.isMD) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied: Only Managers and MD can close visitor tickets',
+        message: 'Access denied: You do not have permission to close visitor tickets',
       });
     }
 
@@ -647,9 +647,9 @@ async function closeVisitorTicket(req, res) {
 
     const visitor = rows[0];
 
-    // Branch check for managers
-    if (!caller.isMD && visitor.branch_name !== caller.branch) {
-      return res.status(403).json({ success: false, message: 'Access denied: You can only close tickets from your branch' });
+    // Branch check for non-MD
+    if (!caller.isMD && visitor.branch_name && caller.branch && visitor.branch_name !== caller.branch) {
+      return res.status(403).json({ success: false, message: `Access denied: You can only close tickets from your branch (${caller.branch})` });
     }
 
     const { remarks } = req.body;
@@ -688,7 +688,7 @@ async function closeVisitorTicket(req, res) {
         closeRemarks,
         caller.id,
         caller.full_name,
-        caller.isMD ? 'MD' : (caller.role || 'Manager'),
+        caller.isMD ? 'MD' : (caller.isFrontOffice ? 'Front Office' : (caller.role || 'Staff')),
       ]
     );
 
