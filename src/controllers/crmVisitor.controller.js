@@ -706,6 +706,86 @@ async function closeVisitorTicket(req, res) {
 }
 
 /**
+ * 6. PATCH /visitors/:id/refreshment
+ * Front Office staff or Managers update refreshment status (Accepted, Refused, Not Offered)
+ */
+async function updateVisitorRefreshment(req, res) {
+  try {
+    const callerId = req.staff?.id;
+    if (!callerId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    const caller = await getCallerStaff(callerId);
+    if (!caller) {
+      return res.status(404).json({ success: false, message: 'Staff user profile not found' });
+    }
+
+    const visitorId = req.params.id;
+    const { status, refreshmentStatus, refreshment_status } = req.body;
+    const finalStatus = (status || refreshmentStatus || refreshment_status || '').trim();
+
+    const allowed = ['Accepted', 'Refused', 'Not Offered'];
+    if (!allowed.includes(finalStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid refreshment status. Must be one of: Accepted, Refused, Not Offered',
+      });
+    }
+
+    const [existing] = await pool.query('SELECT * FROM visitors WHERE id = ? LIMIT 1', [visitorId]);
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: 'Visitor record not found' });
+    }
+
+    const visitor = existing[0];
+
+    // Branch check for non-MD
+    if (!caller.isMD && visitor.branch_name && caller.branch && visitor.branch_name !== caller.branch) {
+      return res.status(403).json({
+        success: false,
+        message: `Access denied: You can only update visitors for your branch (${caller.branch})`,
+      });
+    }
+
+    const oldStatus = visitor.refreshment_status || 'Not Offered';
+
+    await pool.query(
+      'UPDATE visitors SET refreshment_status = ?, updated_at = NOW() WHERE id = ?',
+      [finalStatus, visitorId]
+    );
+
+    // Audit log
+    await pool.query(
+      `INSERT INTO visitor_ticket_history (
+        visitor_id, ticket_id, action, old_status, new_status, remarks,
+        updated_by_id, updated_by_name, updated_by_role
+      ) VALUES (?, ?, 'REFRESHMENT_UPDATED', ?, ?, ?, ?, ?, ?)`,
+      [
+        visitor.id,
+        visitor.ticket_id,
+        visitor.ticket_status,
+        visitor.ticket_status,
+        `Refreshment updated from "${oldStatus}" to "${finalStatus}"`,
+        caller.id,
+        caller.full_name,
+        caller.role || 'Staff',
+      ]
+    );
+
+    const [updatedRows] = await pool.query('SELECT * FROM visitors WHERE id = ?', [visitor.id]);
+    return res.status(200).json({
+      success: true,
+      message: `Refreshment status updated to ${finalStatus}`,
+      data: formatVisitor(updatedRows[0]),
+    });
+  } catch (err) {
+    console.error('Error in updateVisitorRefreshment:', err);
+    return res.status(500).json({ success: false, message: err.message || 'Error updating refreshment status' });
+  }
+}
+
+/**
  * 6. GET /visitors/reports/summary
  * Consolidated reports and KPIs across branches or scoped by manager branch
  */
@@ -824,6 +904,7 @@ module.exports = {
   getVisitors,
   getVisitorById,
   updateVisitorConclusion,
+  updateVisitorRefreshment,
   closeVisitorTicket,
   getVisitorSummaryReport,
 };

@@ -141,6 +141,7 @@ router.get('/visitors', crmVisitor.getVisitors);
 router.get('/visitors/reports/summary', crmVisitor.getVisitorSummaryReport);
 router.get('/visitors/:id', crmVisitor.getVisitorById);
 router.patch('/visitors/:id/conclusion', crmVisitor.updateVisitorConclusion);
+router.patch('/visitors/:id/refreshment', crmVisitor.updateVisitorRefreshment);
 router.patch('/visitors/:id/close', crmVisitor.closeVisitorTicket);
 
 module.exports = router;
