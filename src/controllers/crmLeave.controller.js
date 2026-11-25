@@ -202,10 +202,25 @@ async function getLeaveQuota(req, res, next) {
 
     const usage = await computeMonthlyLeaveUsage(targetId, month);
 
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const perms = parsePermissions(req.staff?.permissions);
+    const [leadTeamRows] = await pool.query('SELECT id FROM teams WHERE lead_id = ? LIMIT 1', [callerId]);
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
+    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage');
+    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm');
+    const isLead = !isGM && (
+      leadTeamRows.length > 0 ||
+      ['LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
+      perms.includes('reports_own_team') ||
+      perms.includes('leaves_lead')
+    );
+    const isLeadOrManager = Boolean(isMD || isHR || isGM || isLead);
+
     return res.status(200).json({
       success: true,
       data: {
         employeeId: targetId,
+        isLeadOrManager,
         ...usage,
       },
     });
@@ -528,7 +543,6 @@ async function getLeaves(req, res, next) {
 
     const leadTeamIds = new Set();
     leadTeamRows.forEach((t) => leadTeamIds.add(Number(t.id)));
-    if (callerStaff.team_id) leadTeamIds.add(Number(callerStaff.team_id));
     if (callerStaff.managed_teams) {
       try {
         const mt = typeof callerStaff.managed_teams === 'string'
@@ -982,7 +996,6 @@ async function getMonthlyLeaveSummary(req, res, next) {
 
     const leadTeamIds = new Set();
     leadTeamRows.forEach((t) => leadTeamIds.add(Number(t.id)));
-    if (callerStaff.team_id) leadTeamIds.add(Number(callerStaff.team_id));
     if (callerStaff.managed_teams) {
       try {
         const mt = typeof callerStaff.managed_teams === 'string'

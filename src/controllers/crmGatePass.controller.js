@@ -288,7 +288,6 @@ async function getGatePasses(req, res, next) {
 
     const leadTeamIds = new Set();
     leadTeamRows.forEach((t) => leadTeamIds.add(Number(t.id)));
-    if (callerStaff.team_id) leadTeamIds.add(Number(callerStaff.team_id));
     if (callerStaff.managed_teams) {
       try {
         const mt = typeof callerStaff.managed_teams === 'string'
