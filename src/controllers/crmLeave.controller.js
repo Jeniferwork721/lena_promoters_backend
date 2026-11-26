@@ -57,8 +57,12 @@ function formatLeaveRow(la) {
   const toDate = formatDateToYmd(la.period_to);
   const numDays = la.number_of_days != null ? Number(la.number_of_days) : 1.0;
   const permHours = la.permission_hours != null ? Number(la.permission_hours) : 0;
-  const leaveCount = la.already_took_leave_count != null ? Number(la.already_took_leave_count) : 0;
-  const permCount = la.already_took_permission_count != null ? Number(la.already_took_permission_count) : 0;
+  const leaveCount = la.live_approved_leave_count != null
+    ? Number(la.live_approved_leave_count)
+    : (la.already_took_leave_count != null ? Number(la.already_took_leave_count) : 0);
+  const permCount = la.live_approved_permission_count != null
+    ? Number(la.live_approved_permission_count)
+    : (la.already_took_permission_count != null ? Number(la.already_took_permission_count) : 0);
 
   return {
     ...la,
@@ -150,6 +154,8 @@ function formatLeaveRow(la) {
  * Helper to compute leave & permission counts for an employee in a given month (YYYY-MM)
  */
 async function computeMonthlyLeaveUsage(employeeId, monthStr) {
+  // Only finally APPROVED leaves & permissions are calculated as taken.
+  // Pending leaves are not taken yet, and rejected/cancelled counts are recycled.
   const [rows] = await pool.query(
     `SELECT 
       leave_for,
@@ -160,7 +166,7 @@ async function computeMonthlyLeaveUsage(employeeId, monthStr) {
      FROM leave_applications
      WHERE employee_id = ?
        AND DATE_FORMAT(period_from, '%Y-%m') = ?
-       AND status NOT IN ('REJECTED', 'CANCELLED')`,
+       AND status = 'APPROVED'`,
     [employeeId, monthStr]
   );
 
@@ -560,7 +566,24 @@ async function getMyLeaves(req, res, next) {
     const total = countRows[0]?.total || 0;
 
     const [rows] = await pool.query(
-      `SELECT * FROM leave_applications ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      `SELECT la.*,
+              (
+                SELECT COALESCE(SUM(l2.number_of_days), 0)
+                FROM leave_applications l2
+                WHERE l2.employee_id = la.employee_id
+                  AND DATE_FORMAT(l2.period_from, '%Y-%m') = DATE_FORMAT(la.period_from, '%Y-%m')
+                  AND l2.leave_for != 'PERMISSION'
+                  AND l2.status = 'APPROVED'
+              ) AS live_approved_leave_count,
+              (
+                SELECT COUNT(*)
+                FROM leave_applications l2
+                WHERE l2.employee_id = la.employee_id
+                  AND DATE_FORMAT(l2.period_from, '%Y-%m') = DATE_FORMAT(la.period_from, '%Y-%m')
+                  AND l2.leave_for = 'PERMISSION'
+                  AND l2.status = 'APPROVED'
+              ) AS live_approved_permission_count
+       FROM leave_applications la ${whereSql} ORDER BY la.id DESC LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
 
@@ -768,7 +791,23 @@ async function getLeaves(req, res, next) {
 
     const [rows] = await pool.query(
       `SELECT la.*, s.phone_number as employeePhone, s.email as employeeEmail,
-              s.branch_location as branch
+              s.branch_location as branch,
+              (
+                SELECT COALESCE(SUM(l2.number_of_days), 0)
+                FROM leave_applications l2
+                WHERE l2.employee_id = la.employee_id
+                  AND DATE_FORMAT(l2.period_from, '%Y-%m') = DATE_FORMAT(la.period_from, '%Y-%m')
+                  AND l2.leave_for != 'PERMISSION'
+                  AND l2.status = 'APPROVED'
+              ) AS live_approved_leave_count,
+              (
+                SELECT COUNT(*)
+                FROM leave_applications l2
+                WHERE l2.employee_id = la.employee_id
+                  AND DATE_FORMAT(l2.period_from, '%Y-%m') = DATE_FORMAT(la.period_from, '%Y-%m')
+                  AND l2.leave_for = 'PERMISSION'
+                  AND l2.status = 'APPROVED'
+              ) AS live_approved_permission_count
        FROM leave_applications la
        LEFT JOIN staff_users s ON la.employee_id = s.id
        ${whereSql}
@@ -1267,7 +1306,7 @@ async function getMonthlyLeaveSummary(req, res, next) {
 
     const staffIds = staffList.map((s) => s.id);
 
-    // Query leaves for targetMonth
+    // Query leaves for targetMonth (only finally approved leaves & permissions count as taken)
     const [leaveRows] = await pool.query(
       `SELECT 
          employee_id,
@@ -1278,7 +1317,7 @@ async function getMonthlyLeaveSummary(req, res, next) {
        FROM leave_applications
        WHERE employee_id IN (?)
          AND DATE_FORMAT(period_from, '%Y-%m') = ?
-         AND status NOT IN ('REJECTED', 'CANCELLED')`,
+         AND status = 'APPROVED'`,
       [staffIds, targetMonth]
     );
 
