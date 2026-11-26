@@ -98,6 +98,10 @@ function formatLeaveRow(la) {
     handover_person_name: la.handover_person_name || '',
     handoverWorkDetails: la.handover_work_details || '',
     handover_work_details: la.handover_work_details || '',
+    actingRepresentativeId: la.acting_representative_id || null,
+    acting_representative_id: la.acting_representative_id || null,
+    actingRepresentativeName: la.acting_representative_name || '',
+    acting_representative_name: la.acting_representative_name || '',
     employeeSignature: la.employee_signature || '',
     employee_signature: la.employee_signature || '',
     tlId: la.tl_id || null,
@@ -191,6 +195,54 @@ async function computeMonthlyLeaveUsage(employeeId, monthStr) {
 }
 
 /**
+ * Helper to get currently active delegations for a staff member.
+ * If a TL, GM, or HR is on approved leave today and assigned this staff member
+ * as their acting representative, this returns their delegation details.
+ */
+async function getActiveDelegations(staffId) {
+  if (!staffId) return [];
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const [rows] = await pool.query(
+      `SELECT la.id as leave_id, la.employee_id as delegator_id, la.employee_name as delegator_name,
+              s.role as delegator_role, s.designation as delegator_designation,
+              s.permissions as delegator_permissions, s.managed_teams as delegator_managed_teams,
+              s.team_id as delegator_team_id, la.period_from, la.period_to
+       FROM leave_applications la
+       JOIN staff_users s ON la.employee_id = s.id
+       WHERE la.acting_representative_id = ?
+         AND la.status = 'APPROVED'
+         AND ? BETWEEN la.period_from AND la.period_to`,
+      [staffId, today]
+    );
+    return rows.map((r) => {
+      let managedTeams = [];
+      try {
+        if (r.delegator_managed_teams) {
+          managedTeams = typeof r.delegator_managed_teams === 'string'
+            ? JSON.parse(r.delegator_managed_teams)
+            : r.delegator_managed_teams;
+        }
+      } catch (_) {}
+      return {
+        leaveId: r.leave_id,
+        delegatorId: r.delegator_id,
+        delegatorName: r.delegator_name,
+        delegatorRole: r.delegator_role,
+        delegatorDesignation: r.delegator_designation,
+        delegatorPermissions: parsePermissions(r.delegator_permissions),
+        delegatorManagedTeams: managedTeams,
+        delegatorTeamId: r.delegator_team_id,
+        periodFrom: formatDateToYmd(r.period_from),
+        periodTo: formatDateToYmd(r.period_to),
+      };
+    });
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
  * 1. GET /leaves/quota
  * Returns caller's (or queried employeeId's) monthly leave & permission quota balance
  */
@@ -201,6 +253,7 @@ async function getLeaveQuota(req, res, next) {
     const month = req.query.month || getCurrentMonthString();
 
     const usage = await computeMonthlyLeaveUsage(targetId, month);
+    const activeDelegations = await getActiveDelegations(callerId);
 
     const roleUpper = (req.staff?.role || '').toUpperCase();
     const perms = parsePermissions(req.staff?.permissions);
@@ -214,13 +267,16 @@ async function getLeaveQuota(req, res, next) {
       perms.includes('reports_own_team') ||
       perms.includes('leaves_lead')
     );
-    const isLeadOrManager = Boolean(isMD || isHR || isGM || isLead);
+    const isActingRep = activeDelegations.length > 0;
+    const isLeadOrManager = Boolean(isMD || isHR || isGM || isLead || isActingRep);
 
     return res.status(200).json({
       success: true,
       data: {
         employeeId: targetId,
         isLeadOrManager,
+        isActingRepresentative: isActingRep,
+        activeDelegations,
         ...usage,
       },
     });
@@ -269,6 +325,8 @@ async function applyLeave(req, res, next) {
       handoverPersonId,
       handoverPersonName,
       handoverWorkDetails,
+      actingRepresentativeId,
+      actingRepresentativeName,
       signature,
     } = req.body;
 
@@ -387,8 +445,9 @@ async function applyLeave(req, res, next) {
         permission_hours, permission_time, number_of_days,
         already_took_leave_count, already_took_permission_count,
         reason, handover_person_id, handover_person_name, handover_work_details,
+        acting_representative_id, acting_representative_name,
         employee_signature, tl_id, tl_status, gm_status, hr_status, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         callerId,
         staff.employeeCode,
@@ -409,6 +468,8 @@ async function applyLeave(req, res, next) {
         handoverPersonId || null,
         handoverPersonName || null,
         handoverWorkDetails || null,
+        actingRepresentativeId ? Number(actingRepresentativeId) : null,
+        actingRepresentativeName || null,
         finalSign,
         tlId,
         tlStatus,
@@ -445,6 +506,8 @@ async function applyLeave(req, res, next) {
         handover_person_id: handoverPersonId,
         handover_person_name: handoverPersonName,
         handover_work_details: handoverWorkDetails,
+        acting_representative_id: actingRepresentativeId ? Number(actingRepresentativeId) : null,
+        acting_representative_name: actingRepresentativeName || null,
         employee_signature: finalSign,
         tl_status: tlStatus,
         gm_status: gmStatus,
@@ -467,7 +530,7 @@ async function getMyLeaves(req, res, next) {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const offset = (page - 1) * limit;
 
-    const { status, month, leaveFor } = req.query;
+    const { status, month, leaveFor, leaveType, type } = req.query;
     let where = ['employee_id = ?'];
     let params = [callerId];
 
@@ -479,7 +542,11 @@ async function getMyLeaves(req, res, next) {
       where.push("DATE_FORMAT(period_from, '%Y-%m') = ?");
       params.push(month);
     }
-    if (leaveFor && leaveFor !== 'ALL') {
+    if (leaveType === 'LEAVE' || type === 'leave') {
+      where.push("leave_for != 'PERMISSION'");
+    } else if (leaveType === 'PERMISSION' || type === 'permission') {
+      where.push("leave_for = 'PERMISSION'");
+    } else if (leaveFor && leaveFor !== 'ALL') {
       where.push('leave_for = ?');
       params.push(leaveFor);
     }
@@ -497,13 +564,16 @@ async function getMyLeaves(req, res, next) {
       [...params, limit, offset]
     );
 
-    // Current month usage
+    // Current month usage & active delegations
     const currentMonthUsage = await computeMonthlyLeaveUsage(callerId, getCurrentMonthString());
+    const activeDelegations = await getActiveDelegations(callerId);
 
     return res.status(200).json({
       success: true,
       data: rows.map(formatLeaveRow),
       quota: currentMonthUsage,
+      activeDelegations,
+      isActingRepresentative: activeDelegations.length > 0,
       pagination: {
         total,
         page,
@@ -553,23 +623,55 @@ async function getLeaves(req, res, next) {
         }
       } catch (_) {}
     }
+
+    // Check for active delegations (TL/GM/HR on approved leave designated caller as acting rep)
+    const activeDelegations = await getActiveDelegations(callerId);
+    let actingHR = false;
+    let actingGM = false;
+    let actingLead = false;
+    const delegatedLeadIds = [];
+
+    activeDelegations.forEach((d) => {
+      delegatedLeadIds.push(d.delegatorId);
+      const dRole = (d.delegatorRole || '').toUpperCase();
+      const dDesig = (d.delegatorDesignation || '').toLowerCase();
+      const dPerms = d.delegatorPermissions || [];
+
+      if (['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(dRole) || dPerms.includes('*') || dPerms.includes('leaves_manage')) {
+        actingHR = true;
+      }
+      if (actingHR || dRole === 'GENERAL_MANAGER' || dDesig.includes('general manager') || dDesig.includes('gm') || dPerms.includes('leaves_gm')) {
+        actingGM = true;
+      }
+      if (['LEAD', 'TEAM_LEAD'].includes(dRole) || dPerms.includes('reports_own_team') || dPerms.includes('leaves_lead') || (d.delegatorManagedTeams && d.delegatorManagedTeams.length > 0)) {
+        actingLead = true;
+      }
+      if (Array.isArray(d.delegatorManagedTeams)) {
+        d.delegatorManagedTeams.forEach((tid) => leadTeamIds.add(Number(tid)));
+      }
+      if (d.delegatorTeamId) {
+        leadTeamIds.add(Number(d.delegatorTeamId));
+      }
+    });
+
     const teamIdList = [...leadTeamIds].filter(Boolean);
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
-    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage');
-    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm');
+    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR;
+    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm') || actingGM;
     const isLead = !isGM && (
       leadTeamIds.size > 0 ||
       ['LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
       perms.includes('reports_own_team') ||
-      perms.includes('leaves_lead')
+      perms.includes('leaves_lead') ||
+      actingLead
     );
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const offset = (page - 1) * limit;
 
-    const { status, stage, department, q, month, from, to } = req.query;
+    const { status, stage, department, q, month, from, to, leaveType, type, leaveFor } = req.query;
 
     let where = ['1=1'];
     let params = [];
@@ -581,13 +683,15 @@ async function getLeaves(req, res, next) {
       // GM sees all company leaves (except MD)
       where.push("s.role NOT IN ('ADMIN', 'SUPER_ADMIN')");
     } else if (isLead) {
-      // Team lead sees own leaves + leaves assigned to them as TL + leaves of all teammates in lead teams
+      // Team lead sees own leaves + leaves assigned to them (or delegated to them) + leaves of teammates in lead teams
+      const tlMatchList = [callerId, ...delegatedLeadIds];
+      const tlPlaceholders = tlMatchList.map(() => '?').join(',');
       if (teamIdList.length > 0) {
-        where.push(`(la.employee_id = ? OR la.tl_id = ? OR s.team_id IN (${teamIdList.join(',')}))`);
-        params.push(callerId, callerId);
+        where.push(`(la.employee_id = ? OR la.tl_id IN (${tlPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`);
+        params.push(callerId, ...tlMatchList);
       } else {
-        where.push('(la.employee_id = ? OR la.tl_id = ?)');
-        params.push(callerId, callerId);
+        where.push(`(la.employee_id = ? OR la.tl_id IN (${tlPlaceholders}))`);
+        params.push(callerId, ...tlMatchList);
       }
     } else {
       // Individual employee only sees own leaves
@@ -602,17 +706,28 @@ async function getLeaves(req, res, next) {
       } else if (isGM) {
         where.push("la.status IN ('PENDING_GM', 'PENDING_TL')");
       } else if (isLead) {
+        const tlMatchList = [callerId, ...delegatedLeadIds];
+        const tlPlaceholders = tlMatchList.map(() => '?').join(',');
         if (teamIdList.length > 0) {
-          where.push(`la.status = 'PENDING_TL' AND (la.tl_id = ? OR s.team_id IN (${teamIdList.join(',')}))`);
-          params.push(callerId);
+          where.push(`la.status = 'PENDING_TL' AND (la.tl_id IN (${tlPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`);
+          params.push(...tlMatchList);
         } else {
-          where.push("la.status = 'PENDING_TL' AND la.tl_id = ?");
-          params.push(callerId);
+          where.push(`la.status = 'PENDING_TL' AND la.tl_id IN (${tlPlaceholders})`);
+          params.push(...tlMatchList);
         }
       }
     } else if (status && status !== 'ALL') {
       where.push('la.status = ?');
       params.push(status);
+    }
+
+    if (leaveType === 'LEAVE' || type === 'leave') {
+      where.push("la.leave_for != 'PERMISSION'");
+    } else if (leaveType === 'PERMISSION' || type === 'permission') {
+      where.push("la.leave_for = 'PERMISSION'");
+    } else if (leaveFor && leaveFor !== 'ALL') {
+      where.push('la.leave_for = ?');
+      params.push(leaveFor);
     }
 
     if (department && department !== 'ALL') {
@@ -680,6 +795,8 @@ async function getLeaves(req, res, next) {
       success: true,
       data: rows.map(formatLeaveRow),
       summary: countsRows[0] || {},
+      activeDelegations,
+      isActingRepresentative: activeDelegations.length > 0,
       pagination: {
         total,
         page,
@@ -739,14 +856,41 @@ async function approveLeave(req, res, next) {
     const roleUpper = (req.staff?.role || '').toUpperCase();
     const desigLower = (req.staff?.designation || '').toLowerCase();
 
+    // Check active delegations
+    const activeDelegations = await getActiveDelegations(callerId);
+    let actingHR = false;
+    let actingGM = false;
+    let actingLead = false;
+    let delegatorName = null;
+    const delegatedLeadIds = [];
+
+    activeDelegations.forEach((d) => {
+      delegatedLeadIds.push(d.delegatorId);
+      if (!delegatorName) delegatorName = d.delegatorName;
+      const dRole = (d.delegatorRole || '').toUpperCase();
+      const dDesig = (d.delegatorDesignation || '').toLowerCase();
+      const dPerms = d.delegatorPermissions || [];
+
+      if (['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(dRole) || dPerms.includes('*') || dPerms.includes('leaves_manage')) {
+        actingHR = true;
+      }
+      if (actingHR || dRole === 'GENERAL_MANAGER' || dDesig.includes('general manager') || dDesig.includes('gm') || dPerms.includes('leaves_gm')) {
+        actingGM = true;
+      }
+      if (['LEAD', 'TEAM_LEAD'].includes(dRole) || dPerms.includes('reports_own_team') || dPerms.includes('leaves_lead') || (d.delegatorManagedTeams && d.delegatorManagedTeams.length > 0)) {
+        actingLead = true;
+      }
+    });
+
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
-    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage');
+    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR;
     const isGM = (
       roleUpper === 'GENERAL_MANAGER' ||
       roleUpper === 'SALES_HEAD' ||
       desigLower.includes('general manager') ||
       desigLower.includes('gm') ||
       perms.includes('leaves_gm') ||
+      actingGM ||
       isMD
     );
 
@@ -769,6 +913,7 @@ async function approveLeave(req, res, next) {
     }
 
     const now = new Date();
+    const recordedName = delegatorName ? `${callerName} (Acting for ${delegatorName})` : callerName;
 
     // 1. Direct HR/MD final bypass
     if (action === 'DIRECT_HR_APPROVE') {
@@ -789,7 +934,7 @@ async function approveLeave(req, res, next) {
              hr_action_at = ?,
              status = 'APPROVED'
          WHERE id = ?`,
-        [tlStatus, gmStatus, callerId, callerName, comments, now, leaveId]
+        [tlStatus, gmStatus, callerId, recordedName, comments, now, leaveId]
       );
 
       return res.status(200).json({
@@ -801,8 +946,9 @@ async function approveLeave(req, res, next) {
 
     // 2. Stage 1: Team Lead (TL) Approval
     if (action === 'TL_APPROVE' || (leave.status === 'PENDING_TL' && action !== 'GM_APPROVE' && action !== 'HR_APPROVE')) {
-      const isAssignedTL = leave.tl_id && String(leave.tl_id) === String(callerId);
-      const isLead = isAssignedTL || ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team') || perms.includes('leaves_lead') || isGM || isHR || isMD;
+      const isAssignedTL = (leave.tl_id && String(leave.tl_id) === String(callerId)) ||
+        delegatedLeadIds.some((did) => String(leave.tl_id) === String(did));
+      const isLead = isAssignedTL || ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team') || perms.includes('leaves_lead') || actingLead || isGM || isHR || isMD;
       if (!isLead) {
         return res.status(403).json({
           success: false,
@@ -819,7 +965,7 @@ async function approveLeave(req, res, next) {
              tl_action_at = ?,
              status = 'PENDING_GM'
          WHERE id = ?`,
-        [callerId, callerName, comments, now, leaveId]
+        [callerId, recordedName, comments, now, leaveId]
       );
 
       return res.status(200).json({
@@ -850,7 +996,7 @@ async function approveLeave(req, res, next) {
              gm_action_at = ?,
              status = 'PENDING_HR'
          WHERE id = ?`,
-        [tlStatus, callerId, callerName, comments, now, leaveId]
+        [tlStatus, callerId, recordedName, comments, now, leaveId]
       );
 
       return res.status(200).json({
@@ -883,7 +1029,7 @@ async function approveLeave(req, res, next) {
              hr_action_at = ?,
              status = 'APPROVED'
          WHERE id = ?`,
-        [tlStatus, gmStatus, callerId, callerName, comments, now, leaveId]
+        [tlStatus, gmStatus, callerId, recordedName, comments, now, leaveId]
       );
 
       return res.status(200).json({
@@ -922,8 +1068,20 @@ async function rejectLeave(req, res, next) {
     const perms = parsePermissions(req.staff?.permissions);
     const roleUpper = (req.staff?.role || '').toUpperCase();
 
+    const activeDelegations = await getActiveDelegations(callerId);
+    let actingHR = false;
+    let delegatorName = null;
+    activeDelegations.forEach((d) => {
+      const dRole = (d.delegatorRole || '').toUpperCase();
+      const dPerms = d.delegatorPermissions || [];
+      if (['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(dRole) || dPerms.includes('*') || dPerms.includes('leaves_manage')) {
+        actingHR = true;
+        if (!delegatorName) delegatorName = d.delegatorName;
+      }
+    });
+
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
-    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage');
+    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR;
 
     if (!isHR && !isMD) {
       return res.status(403).json({
@@ -931,6 +1089,8 @@ async function rejectLeave(req, res, next) {
         message: 'Only Human Resources (HR) or MD has the authority to reject a leave application.',
       });
     }
+
+    const recordedName = delegatorName ? `${callerName} (Acting for ${delegatorName})` : callerName;
 
     const [rows] = await pool.query('SELECT * FROM leave_applications WHERE id = ?', [leaveId]);
     if (rows.length === 0) {
@@ -956,7 +1116,7 @@ async function rejectLeave(req, res, next) {
            hr_action_at = ?,
            status = 'REJECTED'
        WHERE id = ?`,
-      [callerId, callerName, comments.trim(), now, leaveId]
+      [callerId, recordedName, comments.trim(), now, leaveId]
     );
 
     return res.status(200).json({

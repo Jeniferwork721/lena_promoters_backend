@@ -1133,6 +1133,8 @@ async function initializeDatabase() {
         \`handover_person_id\` INT NULL,
         \`handover_person_name\` VARCHAR(150) NULL,
         \`handover_work_details\` TEXT NULL,
+        \`acting_representative_id\` INT NULL,
+        \`acting_representative_name\` VARCHAR(150) NULL,
         \`employee_signature\` VARCHAR(255) NULL,
         \`tl_id\` INT NULL,
         \`tl_status\` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
@@ -1163,6 +1165,14 @@ async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
     console.log('📋 Verified leave_applications table in DB');
+
+    // Ensure acting_representative columns exist on leave_applications
+    try {
+      const [repCol] = await connection.query("SHOW COLUMNS FROM `leave_applications` LIKE 'acting_representative_id'");
+      if (repCol.length === 0) {
+        await connection.query('ALTER TABLE `leave_applications` ADD COLUMN `acting_representative_id` INT NULL, ADD COLUMN `acting_representative_name` VARCHAR(150) NULL');
+      }
+    } catch (_) {}
 
     // Auto-heal any legacy leaves where GM approved directly but was falsely stored under tl_status
     try {
