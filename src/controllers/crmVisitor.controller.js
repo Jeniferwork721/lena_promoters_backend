@@ -35,8 +35,38 @@ function formatDateToYmd(d) {
   return s;
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatNiceDate(val) {
+  if (!val) return '';
+  const ymd = formatDateToYmd(val);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return String(val);
+  const [y, m, d] = ymd.split('-');
+  const monthIdx = parseInt(m, 10) - 1;
+  const monthName = MONTH_NAMES[monthIdx] || m;
+  return `${d} ${monthName} ${y}`;
+}
+
+function formatNiceTime(t) {
+  if (!t) return '';
+  const s = String(t).trim();
+  const match = s.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return s;
+  let h = parseInt(match[1], 10);
+  const m = match[2];
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${String(h).padStart(2, '0')}:${m} ${ampm}`;
+}
+
 function formatVisitor(v) {
   if (!v) return null;
+  const ymdDate = formatDateToYmd(v.visit_date);
+  const niceDate = formatNiceDate(v.visit_date);
+  const niceTime = formatNiceTime(v.visit_time);
+  const dateTimeFormatted = niceDate ? (niceTime ? `${niceDate} · ${niceTime}` : niceDate) : '';
+
   return {
     ...v,
     id: v.id,
@@ -54,14 +84,20 @@ function formatVisitor(v) {
     initialRemarks: v.initial_remarks || '',
     registeredById: v.registered_by_id,
     registeredByName: v.registered_by_name,
-    visitDate: formatDateToYmd(v.visit_date),
+    visitDate: ymdDate,
+    visitDateFormatted: niceDate,
     visitTime: v.visit_time || '',
+    visitTimeFormatted: niceTime,
+    visitDateTimeFormatted: dateTimeFormatted,
     ticketStatus: v.ticket_status || 'Open',
     conclusion: v.conclusion || '',
     conclusionRemarks: v.conclusion_remarks || '',
     followUpDate: formatDateToYmd(v.follow_up_date),
+    followUpDateFormatted: formatNiceDate(v.follow_up_date),
     siteVisitDate: formatDateToYmd(v.site_visit_date),
+    siteVisitDateFormatted: formatNiceDate(v.site_visit_date),
     interviewDate: formatDateToYmd(v.interview_date),
+    interviewDateFormatted: formatNiceDate(v.interview_date),
     closedAt: v.closed_at || null,
     closedById: v.closed_by_id || null,
     closedByName: v.closed_by_name || null,
@@ -72,6 +108,7 @@ function formatVisitor(v) {
 
 function formatHistory(h) {
   if (!h) return null;
+  const niceCreated = h.created_at ? `${formatNiceDate(h.created_at)} · ${formatNiceTime(String(h.created_at).slice(11, 16))}` : '';
   return {
     ...h,
     id: h.id,
@@ -83,12 +120,16 @@ function formatHistory(h) {
     conclusion: h.conclusion || '',
     remarks: h.remarks || '',
     followUpDate: formatDateToYmd(h.follow_up_date),
+    followUpDateFormatted: formatNiceDate(h.follow_up_date),
     siteVisitDate: formatDateToYmd(h.site_visit_date),
+    siteVisitDateFormatted: formatNiceDate(h.site_visit_date),
     interviewDate: formatDateToYmd(h.interview_date),
+    interviewDateFormatted: formatNiceDate(h.interview_date),
     updatedById: h.updated_by_id,
     updatedByName: h.updated_by_name,
     updatedByRole: h.updated_by_role,
     createdAt: h.created_at || '',
+    createdAtFormatted: niceCreated,
   };
 }
 
@@ -162,8 +203,9 @@ async function getCallerStaff(staffId) {
 
   const isMD = roleUpper === 'MD' || roleUpper === 'ADMIN' || roleUpper === 'SUPER_ADMIN' || perms.includes('*');
   const isManager = isMD || roleUpper === 'SALES_HEAD' || roleUpper === 'GENERAL_MANAGER' ||
-                    perms.includes('visitors_manage');
+                    roleUpper === 'IT_HEAD' || perms.includes('visitors_manage');
   const isFrontOffice = isManager || perms.includes('visitors_front_office') || perms.includes('front_office') || perms.includes('visitor_desk');
+  const canViewAllBranches = isMD || roleUpper === 'GENERAL_MANAGER' || roleUpper === 'IT_HEAD' || perms.includes('*') || perms.includes('all_branches');
 
   return {
     ...staff,
@@ -171,6 +213,7 @@ async function getCallerStaff(staffId) {
     isMD,
     isManager,
     isFrontOffice,
+    canViewAllBranches,
     branch: staff.branch_location || 'Karaikudi – Head Office',
   };
 }
@@ -330,11 +373,16 @@ async function getVisitors(req, res) {
     const {
       branch,
       today,
+      yesterday,
+      this_month,
+      date,
       date_from,
       date_to,
       status,
       purpose,
       conclusion,
+      follow_up_only,
+      my_entries,
       q,
       page = 1,
       limit = 50,
@@ -343,20 +391,45 @@ async function getVisitors(req, res) {
     const conditions = [];
     const params = [];
 
-    // Branch scoping:
-    // Front Office staff and Branch Managers only see their own branch records
-    // MD can access all branches or filter by branch
-    if (!caller.isMD) {
-      conditions.push('v.branch_name = ?');
-      params.push(caller.branch);
-    } else if (branch && branch !== 'ALL') {
-      conditions.push('v.branch_name = ?');
-      params.push(branch.trim());
+    // 1. Staff Lonely isolation ("all staff need to saw their entries lonely"):
+    // Regular staff (not MD, not Manager, not Front Office) ALWAYS only see their own entries lonely.
+    // Front Office staff and Managers see branch/all records by default, but if my_entries=true, filter to their own.
+    const isRegularStaff = !caller.isMD && !caller.isManager && !caller.isFrontOffice;
+    const filterMyEntriesOnly = isRegularStaff || my_entries === 'true' || my_entries === '1';
+
+    if (filterMyEntriesOnly) {
+      conditions.push('(v.registered_by_id = ? OR v.person_to_meet_id = ? OR v.person_to_meet = ? OR v.person_to_meet LIKE ?)');
+      params.push(caller.id, caller.id, caller.full_name, `%${caller.full_name}%`);
     }
 
-    // Today filter
+    // 2. Branch scoping:
+    // Users with canViewAllBranches (MD, GM, IT Head) can view all or filter by specific branch.
+    // Branch managers and front office default to their branch.
+    if (caller.canViewAllBranches) {
+      if (branch && branch !== 'ALL') {
+        conditions.push('v.branch_name = ?');
+        params.push(branch.trim());
+      }
+    } else {
+      if (branch && branch !== 'ALL' && branch === caller.branch) {
+        conditions.push('v.branch_name = ?');
+        params.push(branch.trim());
+      } else {
+        conditions.push('v.branch_name = ?');
+        params.push(caller.branch);
+      }
+    }
+
+    // 3. Date filtering ("All shown particular date or daterange want how they took"):
     if (today === 'true' || today === '1') {
       conditions.push('v.visit_date = CURDATE()');
+    } else if (yesterday === 'true' || yesterday === '1') {
+      conditions.push('v.visit_date = SUBDATE(CURDATE(), 1)');
+    } else if (this_month === 'true' || this_month === '1') {
+      conditions.push("v.visit_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND v.visit_date <= LAST_DAY(CURDATE())");
+    } else if (date) {
+      conditions.push('v.visit_date = ?');
+      params.push(formatDateToYmd(date));
     } else {
       if (date_from) {
         conditions.push('v.visit_date >= ?');
@@ -368,29 +441,31 @@ async function getVisitors(req, res) {
       }
     }
 
-    // Status filter
-    if (status && status !== 'ALL') {
+    // 4. Follow-up filter ("followup required meas they cant see that perticularly in options"):
+    if (follow_up_only === 'true' || follow_up_only === '1' || status === 'Follow-up Required' || status === 'Follow-up') {
+      conditions.push("(v.ticket_status = 'Follow-up Required' OR v.conclusion = 'Follow-up Required' OR v.conclusion = 'Follow-up Needed' OR (v.follow_up_date IS NOT NULL AND v.follow_up_date != '' AND v.ticket_status NOT IN ('Completed', 'Closed')))");
+    } else if (status && status !== 'ALL') {
       conditions.push('v.ticket_status = ?');
       params.push(status.trim());
     }
 
-    // Purpose filter
+    // 5. Purpose filter
     if (purpose && purpose !== 'ALL') {
       conditions.push('v.purpose_of_visit = ?');
       params.push(purpose.trim());
     }
 
-    // Conclusion filter
+    // 6. Conclusion filter
     if (conclusion && conclusion !== 'ALL') {
       conditions.push('v.conclusion = ?');
       params.push(conclusion.trim());
     }
 
-    // Search query: visitor name or mobile number
+    // 7. Search query: visitor name, phone, ticket ID, visitor ID, or person to meet
     if (q && q.trim()) {
       const term = `%${q.trim()}%`;
-      conditions.push('(v.name LIKE ? OR v.mobile_number LIKE ? OR v.visitor_id LIKE ? OR v.ticket_id LIKE ?)');
-      params.push(term, term, term, term);
+      conditions.push('(v.name LIKE ? OR v.mobile_number LIKE ? OR v.visitor_id LIKE ? OR v.ticket_id LIKE ? OR v.person_to_meet LIKE ?)');
+      params.push(term, term, term, term, term);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -800,26 +875,64 @@ async function getVisitorSummaryReport(req, res) {
       return res.status(404).json({ success: false, message: 'Staff user profile not found' });
     }
 
-    const { branch, date_from, date_to } = req.query;
+    const {
+      branch,
+      today,
+      yesterday,
+      this_month,
+      date,
+      date_from,
+      date_to,
+      my_entries,
+    } = req.query;
 
     const conditions = [];
     const params = [];
 
-    if (!caller.isMD) {
-      conditions.push('branch_name = ?');
-      params.push(caller.branch);
-    } else if (branch && branch !== 'ALL') {
-      conditions.push('branch_name = ?');
-      params.push(branch.trim());
+    // Lonely staff isolation for reports
+    const isRegularStaff = !caller.isMD && !caller.isManager && !caller.isFrontOffice;
+    const filterMyEntriesOnly = isRegularStaff || my_entries === 'true' || my_entries === '1';
+
+    if (filterMyEntriesOnly) {
+      conditions.push('(registered_by_id = ? OR person_to_meet_id = ? OR person_to_meet = ? OR person_to_meet LIKE ?)');
+      params.push(caller.id, caller.id, caller.full_name, `%${caller.full_name}%`);
     }
 
-    if (date_from) {
-      conditions.push('visit_date >= ?');
-      params.push(formatDateToYmd(date_from));
+    // Branch scoping
+    if (caller.canViewAllBranches) {
+      if (branch && branch !== 'ALL') {
+        conditions.push('branch_name = ?');
+        params.push(branch.trim());
+      }
+    } else {
+      if (branch && branch !== 'ALL' && branch === caller.branch) {
+        conditions.push('branch_name = ?');
+        params.push(branch.trim());
+      } else {
+        conditions.push('branch_name = ?');
+        params.push(caller.branch);
+      }
     }
-    if (date_to) {
-      conditions.push('visit_date <= ?');
-      params.push(formatDateToYmd(date_to));
+
+    // Date filtering
+    if (today === 'true' || today === '1') {
+      conditions.push('visit_date = CURDATE()');
+    } else if (yesterday === 'true' || yesterday === '1') {
+      conditions.push('visit_date = SUBDATE(CURDATE(), 1)');
+    } else if (this_month === 'true' || this_month === '1') {
+      conditions.push("visit_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND visit_date <= LAST_DAY(CURDATE())");
+    } else if (date) {
+      conditions.push('visit_date = ?');
+      params.push(formatDateToYmd(date));
+    } else {
+      if (date_from) {
+        conditions.push('visit_date >= ?');
+        params.push(formatDateToYmd(date_from));
+      }
+      if (date_to) {
+        conditions.push('visit_date <= ?');
+        params.push(formatDateToYmd(date_to));
+      }
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
