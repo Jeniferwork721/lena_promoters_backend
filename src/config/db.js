@@ -67,6 +67,12 @@ async function initializeDatabase() {
       { name: 'plain_password', def: "VARCHAR(255) NULL AFTER `password_hash`" },
       { name: 'created_by', def: "INT NULL AFTER `must_change_password`" },
       { name: 'call_log_tracking_since', def: "DATETIME NULL" },
+      { name: 'working_hours', def: "VARCHAR(100) NOT NULL DEFAULT '09:00 AM - 06:00 PM' AFTER `branch_location`" },
+      { name: 'personal_email', def: "VARCHAR(150) NULL AFTER `email`" },
+      { name: 'aadhar_no', def: "VARCHAR(50) NULL" },
+      { name: 'aadhar_doc', def: "VARCHAR(255) NULL" },
+      { name: 'pan_no', def: "VARCHAR(50) NULL" },
+      { name: 'pan_doc', def: "VARCHAR(255) NULL" },
     ];
     for (const col of criticalStaffCols) {
       try {

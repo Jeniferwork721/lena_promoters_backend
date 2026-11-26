@@ -120,6 +120,10 @@ async function getEmployees(req, res, next) {
           s.blood_group as bloodGroup,
           s.aadhar_no as aadharNo,
           s.pan_no as panNo,
+          s.working_hours as workingHours,
+          s.personal_email as personalEmail,
+          s.aadhar_doc as aadharDoc,
+          s.pan_doc as panDoc,
           s.created_at as createdAt
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
@@ -155,6 +159,10 @@ async function getEmployees(req, res, next) {
           s.blood_group as bloodGroup,
           s.aadhar_no as aadharNo,
           s.pan_no as panNo,
+          s.working_hours as workingHours,
+          s.personal_email as personalEmail,
+          s.aadhar_doc as aadharDoc,
+          s.pan_doc as panDoc,
           s.created_at as createdAt
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
@@ -194,6 +202,10 @@ async function getEmployees(req, res, next) {
       bloodGroup: r.bloodGroup || null,
       aadharNo: r.aadharNo || null,
       panNo: r.panNo || null,
+      workingHours: r.workingHours || '09:00 AM - 06:00 PM',
+      personalEmail: r.personalEmail || null,
+      aadharDoc: r.aadharDoc || null,
+      panDoc: r.panDoc || null,
       createdAt: r.createdAt,
     }));
 
@@ -218,7 +230,31 @@ async function getEmployees(req, res, next) {
  */
 async function createEmployee(req, res, next) {
   try {
-    const { name, phone, email, leadId, teamId, role, designation, department, branch, permissions, managedTeams } = req.body;
+    const {
+      name,
+      phone,
+      email,
+      leadId,
+      teamId,
+      role,
+      designation,
+      department,
+      branch,
+      permissions,
+      managedTeams,
+      workingHours,
+      working_hours,
+      personalEmail,
+      personal_email,
+      aadharNo,
+      aadhar_no,
+      aadharDoc,
+      aadhar_doc,
+      panNo,
+      pan_no,
+      panDoc,
+      pan_doc,
+    } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -239,10 +275,16 @@ async function createEmployee(req, res, next) {
     const cleanName = name.trim();
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     const cleanEmail = email ? email.trim() : `${cleanPhone}@lenapromoters.com`;
+    const cleanPersonalEmail = (personalEmail || personal_email || '').trim() || null;
     const cleanBranch = branch ? branch.trim() : 'Karaikudi – Head Office';
+    const cleanWorkingHours = (workingHours || working_hours || '09:00 AM - 06:00 PM').trim();
     const cleanRole = role ? role.trim().toUpperCase() : 'SALES_EXECUTIVE';
     const cleanDesignation = (designation || role || 'Sales Executive').trim();
     const cleanDepartment = (department || '').trim();
+    const cleanAadharNo = (aadharNo || aadhar_no || '').trim() || null;
+    const cleanAadharDoc = (aadharDoc || aadhar_doc || '').trim() || null;
+    const cleanPanNo = (panNo || pan_no || '').trim().toUpperCase() || null;
+    const cleanPanDoc = (panDoc || pan_doc || '').trim() || null;
 
     // Phone format check: 10 digits starting with 6-9
     if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
@@ -313,33 +355,42 @@ async function createEmployee(req, res, next) {
     try {
       [insertResult] = await pool.query(
         `INSERT INTO staff_users 
-         (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, permissions, team_id, managed_teams, must_change_password)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-        [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, permJson, targetTeamId, managedTeamsJson]
+         (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, permissions, team_id, managed_teams, must_change_password, working_hours, personal_email, aadhar_no, aadhar_doc, pan_no, pan_doc)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+        [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, permJson, targetTeamId, managedTeamsJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc]
       );
     } catch (_) {
       try {
         [insertResult] = await pool.query(
           `INSERT INTO staff_users 
-           (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, permissions, team_id, must_change_password)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-          [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, permJson, targetTeamId]
+           (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, permissions, team_id, managed_teams, must_change_password)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+          [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, permJson, targetTeamId, managedTeamsJson]
         );
       } catch (_) {
         try {
           [insertResult] = await pool.query(
             `INSERT INTO staff_users 
-             (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, team_id, must_change_password)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-            [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, targetTeamId]
+             (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, permissions, team_id, must_change_password)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+            [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, permJson, targetTeamId]
           );
         } catch (_) {
-          [insertResult] = await pool.query(
-            `INSERT INTO staff_users 
-             (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, team_id, must_change_password)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-            [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, targetTeamId]
-          );
+          try {
+            [insertResult] = await pool.query(
+              `INSERT INTO staff_users 
+               (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, designation, department, team_id, must_change_password)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+              [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, cleanDesignation, cleanDepartment || null, targetTeamId]
+            );
+          } catch (_) {
+            [insertResult] = await pool.query(
+              `INSERT INTO staff_users 
+               (employee_id, full_name, email, phone_number, password_hash, plain_password, branch_location, role, team_id, must_change_password)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+              [employeeId, cleanName, cleanEmail, cleanPhone, passwordHash, tempPassword, cleanBranch, cleanRole, targetTeamId]
+            );
+          }
         }
       }
     }
@@ -380,10 +431,16 @@ async function createEmployee(req, res, next) {
         name: cleanName,
         phone: cleanPhone,
         email: cleanEmail,
+        personalEmail: cleanPersonalEmail,
         role: cleanRole,
         designation: cleanDesignation,
         department: cleanDepartment || null,
         branch: cleanBranch,
+        workingHours: cleanWorkingHours,
+        aadharNo: cleanAadharNo,
+        aadharDoc: cleanAadharDoc,
+        panNo: cleanPanNo,
+        panDoc: cleanPanDoc,
         permissions: permArray,
         managedTeams: cleanManagedTeams,
         teamId: targetTeamId ? String(targetTeamId) : null,
@@ -427,6 +484,12 @@ async function getEmployeeById(req, res, next) {
           lead_user.full_name as leadName,
           s.plain_password,
           (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
+          s.working_hours as workingHours,
+          s.personal_email as personalEmail,
+          s.aadhar_no as aadharNo,
+          s.aadhar_doc as aadharDoc,
+          s.pan_no as panNo,
+          s.pan_doc as panDoc,
           s.created_at as createdAt
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
@@ -449,6 +512,12 @@ async function getEmployeeById(req, res, next) {
           lead_user.full_name as leadName,
           s.plain_password,
           (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
+          s.working_hours as workingHours,
+          s.personal_email as personalEmail,
+          s.aadhar_no as aadharNo,
+          s.aadhar_doc as aadharDoc,
+          s.pan_no as panNo,
+          s.pan_doc as panDoc,
           s.created_at as createdAt
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
@@ -509,7 +578,11 @@ async function getEmployeeById(req, res, next) {
         maritalStatus: employee.maritalStatus || null,
         bloodGroup: employee.bloodGroup || null,
         aadharNo: employee.aadharNo || null,
+        aadharDoc: employee.aadharDoc || null,
         panNo: employee.panNo || null,
+        panDoc: employee.panDoc || null,
+        workingHours: employee.workingHours || '09:00 AM - 06:00 PM',
+        personalEmail: employee.personalEmail || null,
         createdAt: employee.createdAt,
       },
     });
@@ -611,7 +684,31 @@ async function updateEmployeeAssignment(req, res, next) {
 async function updateEmployee(req, res, next) {
   try {
     const employeeId = req.params.id;
-    const { name, phone, email, role, designation, department, leadId, teamName, branch, permissions, managedTeams } = req.body;
+    const {
+      name,
+      phone,
+      email,
+      role,
+      designation,
+      department,
+      leadId,
+      teamName,
+      branch,
+      permissions,
+      managedTeams,
+      workingHours,
+      working_hours,
+      personalEmail,
+      personal_email,
+      aadharNo,
+      aadhar_no,
+      aadharDoc,
+      aadhar_doc,
+      panNo,
+      pan_no,
+      panDoc,
+      pan_doc,
+    } = req.body;
 
     const [empRows] = await pool.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [employeeId]);
     if (empRows.length === 0) {
@@ -626,6 +723,12 @@ async function updateEmployee(req, res, next) {
     const cleanRole = String(role || currentEmp.role || 'SALES_EXECUTIVE').trim().toUpperCase();
     const cleanDesignation = String((designation !== undefined ? designation : (role || currentEmp.designation || currentEmp.role || 'Sales Executive')) || '').trim();
     const cleanDepartment = String((department !== undefined ? department : (currentEmp.department || '')) || '').trim();
+    const cleanWorkingHours = String((workingHours !== undefined ? workingHours : (working_hours !== undefined ? working_hours : currentEmp.working_hours)) || '09:00 AM - 06:00 PM').trim();
+    const cleanPersonalEmail = personalEmail !== undefined ? (personalEmail || '').trim() : (personal_email !== undefined ? (personal_email || '').trim() : (currentEmp.personal_email || null));
+    const cleanAadharNo = aadharNo !== undefined ? (aadharNo || '').trim() : (aadhar_no !== undefined ? (aadhar_no || '').trim() : (currentEmp.aadhar_no || null));
+    const cleanAadharDoc = aadharDoc !== undefined ? (aadharDoc || '').trim() : (aadhar_doc !== undefined ? (aadhar_doc || '').trim() : (currentEmp.aadhar_doc || null));
+    const cleanPanNo = panNo !== undefined ? (panNo || '').trim().toUpperCase() : (pan_no !== undefined ? (pan_no || '').trim().toUpperCase() : (currentEmp.pan_no || null));
+    const cleanPanDoc = panDoc !== undefined ? (panDoc || '').trim() : (pan_doc !== undefined ? (pan_doc || '').trim() : (currentEmp.pan_doc || null));
     const isExecutiveRole = ['SALES_HEAD', 'SALES_MANAGER', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HEAD_MANAGER', 'ADMIN'].includes(cleanRole);
     const isTargetLead = !isExecutiveRole && (['LEAD', 'TEAM_LEAD'].includes(cleanRole) || req.body.responsibility === 'TEAM_LEAD');
 
@@ -732,35 +835,39 @@ async function updateEmployee(req, res, next) {
       if (hasPermUpdate && hasManagedTeamsUpdate) {
         await pool.query(`
           UPDATE staff_users 
-          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, permissions = ?, managed_teams = ?
+          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, permissions = ?, managed_teams = ?,
+              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?
           WHERE id = ?
-        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, managedTeamsJson, employeeId]);
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, managedTeamsJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, employeeId]);
       } else if (hasPermUpdate) {
         await pool.query(`
           UPDATE staff_users 
-          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, permissions = ?
+          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, permissions = ?,
+              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?
           WHERE id = ?
-        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, employeeId]);
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, employeeId]);
       } else if (hasManagedTeamsUpdate) {
         await pool.query(`
           UPDATE staff_users 
-          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, managed_teams = ?
+          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, managed_teams = ?,
+              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?
           WHERE id = ?
-        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, managedTeamsJson, employeeId]);
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, managedTeamsJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, employeeId]);
       } else {
         await pool.query(`
           UPDATE staff_users 
-          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?
+          SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?,
+              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?
           WHERE id = ?
-        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, employeeId]);
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, employeeId]);
       }
     } catch (err) {
       console.warn('updateEmployee primary UPDATE failed, falling back:', err.message);
       await pool.query(`
         UPDATE staff_users 
-        SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?, branch_location = ?
+        SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?, branch_location = ?, working_hours = ?
         WHERE id = ?
-      `, [cleanName, cleanPhone, cleanEmail, finalRole, finalTeamId, cleanBranch, employeeId]);
+      `, [cleanName, cleanPhone, cleanEmail, finalRole, finalTeamId, cleanBranch, cleanWorkingHours, employeeId]);
     }
 
     // Fetch updated record with team details
@@ -784,7 +891,13 @@ async function updateEmployee(req, res, next) {
           t.lead_id as leadId,
           lead_user.full_name as leadName,
           s.plain_password as password,
-          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount
+          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
+          s.working_hours as workingHours,
+          s.personal_email as personalEmail,
+          s.aadhar_no as aadharNo,
+          s.aadhar_doc as aadharDoc,
+          s.pan_no as panNo,
+          s.pan_doc as panDoc
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
         LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
@@ -805,7 +918,13 @@ async function updateEmployee(req, res, next) {
           t.lead_id as leadId,
           lead_user.full_name as leadName,
           s.plain_password as password,
-          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount
+          (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
+          s.working_hours as workingHours,
+          s.personal_email as personalEmail,
+          s.aadhar_no as aadharNo,
+          s.aadhar_doc as aadharDoc,
+          s.pan_no as panNo,
+          s.pan_doc as panDoc
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
         LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
@@ -836,6 +955,12 @@ async function updateEmployee(req, res, next) {
         leadName: updated.leadName || null,
         hasAccount: Boolean(updated.hasAccount),
         password: updated.password || 'Lena@1234',
+        workingHours: updated.workingHours || cleanWorkingHours,
+        personalEmail: updated.personalEmail !== undefined ? updated.personalEmail : cleanPersonalEmail,
+        aadharNo: updated.aadharNo !== undefined ? updated.aadharNo : cleanAadharNo,
+        aadharDoc: updated.aadharDoc !== undefined ? updated.aadharDoc : cleanAadharDoc,
+        panNo: updated.panNo !== undefined ? updated.panNo : cleanPanNo,
+        panDoc: updated.panDoc !== undefined ? updated.panDoc : cleanPanDoc,
       },
     });
   } catch (err) {

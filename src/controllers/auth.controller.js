@@ -242,8 +242,12 @@ async function loginWithPassword(req, res, next) {
         verifiedEmployee: Boolean(staff.is_verified_employee),
         dob: staff.dob,
         personalPhone: staff.personal_phone,
+        personalEmail: staff.personal_email || null,
+        workingHours: staff.working_hours || '09:00 AM - 06:00 PM',
         aadharNo: staff.aadhar_no,
+        aadharDoc: staff.aadhar_doc || null,
         panNo: staff.pan_no,
+        panDoc: staff.pan_doc || null,
         bankName: staff.bank_name,
         accountNo: staff.account_no,
         bankBranch: staff.bank_branch,
@@ -895,8 +899,12 @@ async function getProfile(req, res, next) {
         verifiedEmployee: Boolean(staff.is_verified_employee),
         dob: staff.dob,
         personalPhone: staff.personal_phone,
+        personalEmail: staff.personal_email || null,
+        workingHours: staff.working_hours || '09:00 AM - 06:00 PM',
         aadharNo: staff.aadhar_no,
+        aadharDoc: staff.aadhar_doc || null,
         panNo: staff.pan_no,
+        panDoc: staff.pan_doc || null,
         bankName: staff.bank_name,
         accountNo: staff.account_no,
         bankBranch: staff.bank_branch,
@@ -1590,10 +1598,18 @@ async function updateStaffProfile(req, res, next) {
       dob,
       personalPhone,
       personal_phone,
+      personalEmail,
+      personal_email,
+      workingHours,
+      working_hours,
       aadharNo,
       aadhar_no,
+      aadharDoc,
+      aadhar_doc,
       panNo,
       pan_no,
+      panDoc,
+      pan_doc,
       bankName,
       bank_name,
       accountNo,
@@ -1672,8 +1688,12 @@ async function updateStaffProfile(req, res, next) {
     // Profile Details
     const finalDob = dob !== undefined ? dob : currentStaff.dob;
     const finalPersonalPhone = (personalPhone || personal_phone || '').trim() || currentStaff.personal_phone;
+    const finalPersonalEmail = personalEmail !== undefined ? (personalEmail || '').trim() : (personal_email !== undefined ? (personal_email || '').trim() : (currentStaff.personal_email || null));
+    const finalWorkingHours = (workingHours || working_hours || '').trim() || currentStaff.working_hours || '09:00 AM - 06:00 PM';
     const finalAadhar = (aadharNo || aadhar_no || '').trim() || currentStaff.aadhar_no;
+    const finalAadharDoc = aadharDoc !== undefined ? (aadharDoc || '').trim() : (aadhar_doc !== undefined ? (aadhar_doc || '').trim() : (currentStaff.aadhar_doc || null));
     const finalPan = (panNo || pan_no || '').trim().toUpperCase() || currentStaff.pan_no;
+    const finalPanDoc = panDoc !== undefined ? (panDoc || '').trim() : (pan_doc !== undefined ? (pan_doc || '').trim() : (currentStaff.pan_doc || null));
     const finalBankName = (bankName || bank_name || '').trim() || currentStaff.bank_name;
     const finalAccountNo = (accountNo || account_no || '').trim() || currentStaff.account_no;
     const finalBankBranch = (bankBranch || bank_branch || '').trim() || currentStaff.bank_branch;
@@ -1690,13 +1710,11 @@ async function updateStaffProfile(req, res, next) {
     const finalSpouse = spouse !== undefined ? JSON.stringify(spouse) : (typeof currentStaff.spouse === 'string' ? currentStaff.spouse : JSON.stringify(currentStaff.spouse || {}));
     const finalWorkExp = (workExperience || work_experience) !== undefined ? JSON.stringify(workExperience || work_experience) : (typeof currentStaff.work_experience === 'string' ? currentStaff.work_experience : JSON.stringify(currentStaff.work_experience || []));
 
-    // Mandatory completion calculation
+    // Mandatory completion calculation (Aadhaar & PAN KYC docs/numbers are optional)
     const hasMandatory = Boolean(
       (finalName && finalName.length > 0) &&
       finalDob &&
       (finalPersonalPhone && finalPersonalPhone.length >= 10) &&
-      (finalAadhar && finalAadhar.length >= 12) &&
-      (finalPan && finalPan.length >= 10) &&
       finalBankName &&
       finalAccountNo &&
       finalBankBranch &&
@@ -1712,6 +1730,8 @@ async function updateStaffProfile(req, res, next) {
       `UPDATE staff_users SET
          full_name = ?,
          email = ?,
+         personal_email = ?,
+         working_hours = ?,
          branch_location = ?,
          role = ?,
          department = ?,
@@ -1719,7 +1739,9 @@ async function updateStaffProfile(req, res, next) {
          dob = ?,
          personal_phone = ?,
          aadhar_no = ?,
+         aadhar_doc = ?,
          pan_no = ?,
+         pan_doc = ?,
          bank_name = ?,
          account_no = ?,
          bank_branch = ?,
@@ -1739,6 +1761,8 @@ async function updateStaffProfile(req, res, next) {
       [
         finalName,
         newEmail,
+        finalPersonalEmail,
+        finalWorkingHours,
         finalBranch,
         finalRole,
         finalDepartment || null,
@@ -1746,7 +1770,9 @@ async function updateStaffProfile(req, res, next) {
         finalDob || null,
         finalPersonalPhone || null,
         finalAadhar || null,
+        finalAadharDoc || null,
         finalPan || null,
+        finalPanDoc || null,
         finalBankName || null,
         finalAccountNo || null,
         finalBankBranch || null,
@@ -1791,8 +1817,12 @@ async function updateStaffProfile(req, res, next) {
         verifiedEmployee: Boolean(updated.is_verified_employee),
         dob: updated.dob,
         personalPhone: updated.personal_phone,
+        personalEmail: updated.personal_email || null,
+        workingHours: updated.working_hours || '09:00 AM - 06:00 PM',
         aadharNo: updated.aadhar_no,
+        aadharDoc: updated.aadhar_doc || null,
         panNo: updated.pan_no,
+        panDoc: updated.pan_doc || null,
         bankName: updated.bank_name,
         accountNo: updated.account_no,
         bankBranch: updated.bank_branch,
@@ -1865,8 +1895,12 @@ async function getMe(req, res, next) {
       verifiedEmployee: Boolean(staff.is_verified_employee),
       dob: staff.dob,
       personalPhone: staff.personal_phone,
+      personalEmail: staff.personal_email || null,
+      workingHours: staff.working_hours || '09:00 AM - 06:00 PM',
       aadharNo: staff.aadhar_no,
+      aadharDoc: staff.aadhar_doc || null,
       panNo: staff.pan_no,
+      panDoc: staff.pan_doc || null,
       bankName: staff.bank_name,
       accountNo: staff.account_no,
       bankBranch: staff.bank_branch,
