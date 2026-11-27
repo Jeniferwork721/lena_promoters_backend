@@ -490,6 +490,8 @@ async function getGatePasses(req, res, next) {
       success: true,
       data: rows.map(formatGatePass),
       summary: countsRows[0] || {},
+      activeDelegations,
+      isActingRepresentative: activeDelegations.length > 0,
       pagination: {
         total,
         page,

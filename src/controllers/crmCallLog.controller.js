@@ -573,7 +573,11 @@ async function markCallLogLogged(req, res, next) {
     const id = req.params.id;
     const reportId = req.body?.reportId ? String(req.body.reportId).slice(0, 64) : null;
     const callerId = req.staff?.id;
-    const isMD = req.staff?.role === 'MD' || req.staff?.role === 'ADMIN';
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const perms = Array.isArray(req.staff?.permissions)
+      ? req.staff.permissions
+      : (typeof req.staff?.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
 
     let updateSql = 'UPDATE staff_call_logs SET is_added_to_entry = 1, crm_report_id = COALESCE(?, crm_report_id) WHERE id = ?';
     let updateParams = [reportId, id];
