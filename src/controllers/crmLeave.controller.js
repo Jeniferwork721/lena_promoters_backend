@@ -448,7 +448,13 @@ async function applyLeave(req, res, next) {
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
     const isTeamLead = staff.lead_id && String(staff.lead_id) === String(callerId);
 
-    if (isMD) {
+    if (leaveFor === 'PERMISSION') {
+      // Permission requests are approved strictly by HR only
+      tlStatus = 'SKIPPED';
+      gmStatus = 'SKIPPED';
+      hrStatus = 'PENDING';
+      initialStatus = 'PENDING_HR';
+    } else if (isMD) {
       // MD applies -> auto-approved
       tlStatus = 'SKIPPED';
       gmStatus = 'SKIPPED';
@@ -715,7 +721,7 @@ async function getLeaves(req, res, next) {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const offset = (page - 1) * limit;
 
-    const { status, stage, department, q, month, from, to, leaveType, type, leaveFor } = req.query;
+    const { status, stage, department, q, month, date, from, to, leaveType, type, leaveFor } = req.query;
 
     let where = ['1=1'];
     let params = [];
@@ -745,24 +751,32 @@ async function getLeaves(req, res, next) {
 
     // Filter by stage / pending my approval
     if (stage === 'pending_my_approval') {
-      if (isHR) {
-        where.push("la.status IN ('PENDING_HR', 'PENDING_GM', 'PENDING_TL')");
+      if (isHR || isMD) {
+        // HR / MD acts on final approval stage (and permissions)
+        where.push("la.status = 'PENDING_HR'");
       } else if (isGM) {
-        where.push("la.status IN ('PENDING_GM', 'PENDING_TL')");
+        // GM only acts after TL has approved (PENDING_GM). Does not see PENDING_TL or permissions.
+        where.push("la.status = 'PENDING_GM' AND la.leave_for != 'PERMISSION'");
       } else if (isLead) {
+        // TL acts only on PENDING_TL. Does not approve permissions.
         const tlMatchList = [callerId, ...delegatedLeadIds];
         const tlPlaceholders = tlMatchList.map(() => '?').join(',');
         if (teamIdList.length > 0) {
-          where.push(`la.status = 'PENDING_TL' AND (la.tl_id IN (${tlPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`);
+          where.push(`la.status = 'PENDING_TL' AND la.leave_for != 'PERMISSION' AND (la.tl_id IN (${tlPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`);
           params.push(...tlMatchList);
         } else {
-          where.push(`la.status = 'PENDING_TL' AND la.tl_id IN (${tlPlaceholders})`);
+          where.push(`la.status = 'PENDING_TL' AND la.leave_for != 'PERMISSION' AND la.tl_id IN (${tlPlaceholders})`);
           params.push(...tlMatchList);
         }
       }
     } else if (status && status !== 'ALL') {
       where.push('la.status = ?');
       params.push(status);
+    }
+
+    if (date) {
+      where.push('(? BETWEEN la.period_from AND la.period_to OR DATE(la.application_date) = ?)');
+      params.push(date, date);
     }
 
     if (leaveType === 'LEAVE' || type === 'leave') {
@@ -975,6 +989,14 @@ async function approveLeave(req, res, next) {
     const now = new Date();
     const recordedName = delegatorName ? `${callerName} (Acting for ${delegatorName})` : callerName;
 
+    // 0. Permission check: Permissions are strictly approved by HR (or MD) only
+    if (leave.leave_for === 'PERMISSION' && !isHR && !isMD) {
+      return res.status(403).json({
+        success: false,
+        message: 'Permission requests can only be approved by HR or Managing Director.',
+      });
+    }
+
     // 1. Direct HR/MD final bypass
     if (action === 'DIRECT_HR_APPROVE') {
       if (!isHR && !isMD) {
@@ -1008,11 +1030,11 @@ async function approveLeave(req, res, next) {
     if (action === 'TL_APPROVE' || (leave.status === 'PENDING_TL' && action !== 'GM_APPROVE' && action !== 'HR_APPROVE')) {
       const isAssignedTL = (leave.tl_id && String(leave.tl_id) === String(callerId)) ||
         delegatedLeadIds.some((did) => String(leave.tl_id) === String(did));
-      const isLead = isAssignedTL || ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team') || perms.includes('leaves_lead') || actingLead || isGM || isHR || isMD;
+      const isLead = isAssignedTL || ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team') || perms.includes('leaves_lead') || actingLead || isMD;
       if (!isLead) {
         return res.status(403).json({
           success: false,
-          message: 'Only the designated Team Lead, General Manager, or HR can approve this leave.',
+          message: 'Only the designated Team Lead (or MD) can review and forward this leave at the TL stage.',
         });
       }
 
