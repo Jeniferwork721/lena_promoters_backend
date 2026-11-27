@@ -395,14 +395,7 @@ async function getGatePasses(req, res, next) {
     const teamIdList = [...leadTeamIds].filter(Boolean);
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
-    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage') || perms.includes('gatepass_manage') || actingHR;
-    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm') || perms.includes('gatepass_approve') || actingGM;
-    const isLead = !isGM && (
-      leadTeamIds.size > 0 ||
-      ['LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
-      perms.includes('reports_own_team') ||
-      actingLead
-    );
+    const isGatePassManager = isMD || roleUpper === 'HR' || perms.includes('gatepass_approve') || perms.includes('gatepass_manage') || actingHR;
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
@@ -413,19 +406,10 @@ async function getGatePasses(req, res, next) {
     let where = ['1=1'];
     let params = [];
 
-    if (isHR || isMD || isGM) {
-      // HR/GM/MD can see all gate passes
-    } else if (isLead) {
-      // Team lead sees teammates' gate passes + own
-      if (teamIdList.length > 0) {
-        where.push(`(gp.employee_id = ? OR gp.employee_id IN (SELECT id FROM staff_users WHERE team_id IN (${teamIdList.join(',')})))`);
-        params.push(callerId);
-      } else {
-        where.push('gp.employee_id = ?');
-        params.push(callerId);
-      }
+    if (isGatePassManager) {
+      // HR / MD / Authorized Gate Pass Desk (e.g. Front Office with gatepass_approve) can see all company gate passes
     } else {
-      // Normal employee sees only own
+      // Normal employee / staff without gate pass permissions sees only their own gate passes
       where.push('gp.employee_id = ?');
       params.push(callerId);
     }

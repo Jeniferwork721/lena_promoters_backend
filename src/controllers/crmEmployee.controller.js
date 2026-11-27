@@ -416,21 +416,15 @@ async function createEmployee(req, res, next) {
       let finalTeamName = String(req.body.teamName || `${cleanName}'s Team`).trim();
       const [dupName] = await pool.query('SELECT id FROM teams WHERE LOWER(name) = LOWER(?) LIMIT 1', [finalTeamName]);
       if (dupName.length > 0) {
-        if (req.body.teamName && req.body.teamName.trim()) {
-          return res.status(400).json({
-            success: false,
-            message: `A team named "${finalTeamName}" already exists. Please choose a different team name.`,
-            errors: { teamName: 'Already exists' },
-          });
-        } else {
-          finalTeamName = `${cleanName}'s Team (${newStaffId})`;
-        }
+        targetTeamId = dupName[0].id;
+        await pool.query('UPDATE teams SET lead_id = ? WHERE id = ?', [newStaffId, targetTeamId]);
+      } else {
+        const [teamInsert] = await pool.query(
+          'INSERT INTO teams (name, lead_id) VALUES (?, ?)',
+          [finalTeamName, newStaffId]
+        );
+        targetTeamId = teamInsert.insertId;
       }
-      const [teamInsert] = await pool.query(
-        'INSERT INTO teams (name, lead_id) VALUES (?, ?)',
-        [finalTeamName, newStaffId]
-      );
-      targetTeamId = teamInsert.insertId;
       await pool.query('UPDATE staff_users SET team_id = ? WHERE id = ?', [targetTeamId, newStaffId]);
     }
 
@@ -757,8 +751,8 @@ async function updateEmployee(req, res, next) {
     const cleanPanNo = panNo !== undefined ? (panNo || '').trim().toUpperCase() : (pan_no !== undefined ? (pan_no || '').trim().toUpperCase() : (currentEmp.pan_no || null));
     const cleanPanDoc = panDoc !== undefined ? (panDoc || '').trim() : (pan_doc !== undefined ? (pan_doc || '').trim() : (currentEmp.pan_doc || null));
     const cleanDelegateId = (actingDelegateId !== undefined ? (actingDelegateId ? Number(actingDelegateId) : null) : (acting_delegate_id !== undefined ? (acting_delegate_id ? Number(acting_delegate_id) : null) : (currentEmp.acting_delegate_id || null)));
-    const cleanDelegateName = (actingDelegateName !== undefined ? (actingDelegateName ? String(actingDelegateName).trim() : null) : (acting_delegate_name !== undefined ? (acting_delegate_name ? String(acting_delegate_name).trim() : null) : (currentEmp.acting_delegate_name || null)));
-    const cleanDelegateUntil = (actingDelegateUntil !== undefined ? (actingDelegateUntil || null) : (acting_delegate_until !== undefined ? (acting_delegate_until || null) : (currentEmp.acting_delegate_until || null)));
+    const cleanDelegateName = cleanDelegateId ? (actingDelegateName !== undefined ? (actingDelegateName ? String(actingDelegateName).trim() : null) : (acting_delegate_name !== undefined ? (acting_delegate_name ? String(acting_delegate_name).trim() : null) : (currentEmp.acting_delegate_name || null))) : null;
+    const cleanDelegateUntil = cleanDelegateId ? (actingDelegateUntil !== undefined ? (actingDelegateUntil || null) : (acting_delegate_until !== undefined ? (acting_delegate_until || null) : (currentEmp.acting_delegate_until || null))) : null;
     const isExecutiveRole = ['SALES_HEAD', 'SALES_MANAGER', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HEAD_MANAGER', 'ADMIN'].includes(cleanRole);
     const isTargetLead = !isExecutiveRole && (['LEAD', 'TEAM_LEAD'].includes(cleanRole) || req.body.responsibility === 'TEAM_LEAD');
 
@@ -811,34 +805,28 @@ async function updateEmployee(req, res, next) {
             [newTeamName, finalTeamId]
           );
           if (dupName.length > 0) {
-            return res.status(400).json({
-              success: false,
-              message: `A team named "${newTeamName}" already exists. Please choose a different team name.`,
-              errors: { teamName: 'Already exists' },
-            });
+            // Adopt the duplicate named team
+            finalTeamId = dupName[0].id;
+            await pool.query('UPDATE teams SET lead_id = ? WHERE id = ?', [employeeId, finalTeamId]);
+          } else {
+            await pool.query('UPDATE teams SET name = ? WHERE id = ?', [newTeamName, finalTeamId]);
           }
-          await pool.query('UPDATE teams SET name = ? WHERE id = ?', [newTeamName, finalTeamId]);
         }
       } else {
-        // Create a new team for this lead
+        // Create a new team for this lead or adopt existing team by name
         let desiredTeamName = String(teamName || `${cleanName}'s Team`).trim();
         const [dupName] = await pool.query('SELECT id FROM teams WHERE LOWER(name) = LOWER(?) LIMIT 1', [desiredTeamName]);
         if (dupName.length > 0) {
-          if (teamName && teamName.trim()) {
-            return res.status(400).json({
-              success: false,
-              message: `A team named "${desiredTeamName}" already exists. Please choose a different team name.`,
-              errors: { teamName: 'Already exists' },
-            });
-          } else {
-            desiredTeamName = `${cleanName}'s Team (${employeeId})`;
-          }
+          // Re-claim / adopt the existing team
+          finalTeamId = dupName[0].id;
+          await pool.query('UPDATE teams SET lead_id = ? WHERE id = ?', [employeeId, finalTeamId]);
+        } else {
+          const [insertTeam] = await pool.query(
+            'INSERT INTO teams (name, lead_id) VALUES (?, ?)',
+            [desiredTeamName, employeeId]
+          );
+          finalTeamId = insertTeam.insertId;
         }
-        const [insertTeam] = await pool.query(
-          'INSERT INTO teams (name, lead_id) VALUES (?, ?)',
-          [desiredTeamName, employeeId]
-        );
-        finalTeamId = insertTeam.insertId;
       }
     } else {
       // Setting as common employee / telecaller / other role
