@@ -69,9 +69,7 @@ function requireMD(req, res, next) {
 
   const isExecutiveAdmin =
     appRole === 'MD' ||
-    r === 'ADMIN' ||
-    r === 'SUPER_ADMIN' ||
-    r === 'MD' ||
+    ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'IT_HEAD', 'GENERAL_MANAGER'].includes(r) ||
     perms.includes('*') ||
     perms.includes('employees_manage');
 

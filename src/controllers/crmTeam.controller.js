@@ -73,6 +73,9 @@ async function getTeamLeads(req, res, next) {
         COALESCE(t.name, CONCAT(s.full_name, '''s Team')) as teamName,
         s.plain_password,
         (s.password_hash IS NOT NULL AND s.password_hash != '') as hasAccount,
+        s.acting_delegate_id as actingDelegateId,
+        s.acting_delegate_name as actingDelegateName,
+        s.acting_delegate_until as actingDelegateUntil,
         (SELECT COUNT(*) FROM staff_users m WHERE m.team_id = COALESCE(t.id, s.team_id) AND m.id != s.id AND m.is_active = 1) as employeeCount
       FROM staff_users s
       LEFT JOIN teams t ON t.id = (
@@ -104,6 +107,9 @@ async function getTeamLeads(req, res, next) {
       teamName: r.teamName || '',
       employeeCount: Number(r.employeeCount) || 0,
       hasAccount: Boolean(r.hasAccount),
+      actingDelegateId: r.actingDelegateId ? Number(r.actingDelegateId) : null,
+      actingDelegateName: r.actingDelegateName || null,
+      actingDelegateUntil: r.actingDelegateUntil || null,
       ...(isMD ? { password: r.plain_password || 'Lena@1234' } : {}),
     }));
 
