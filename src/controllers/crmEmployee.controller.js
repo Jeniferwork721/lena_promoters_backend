@@ -505,6 +505,9 @@ async function getEmployeeById(req, res, next) {
           s.aadhar_doc as aadharDoc,
           s.pan_no as panNo,
           s.pan_doc as panDoc,
+          s.acting_delegate_id as actingDelegateId,
+          s.acting_delegate_name as actingDelegateName,
+          s.acting_delegate_until as actingDelegateUntil,
           s.created_at as createdAt
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
@@ -533,6 +536,9 @@ async function getEmployeeById(req, res, next) {
           s.aadhar_doc as aadharDoc,
           s.pan_no as panNo,
           s.pan_doc as panDoc,
+          s.acting_delegate_id as actingDelegateId,
+          s.acting_delegate_name as actingDelegateName,
+          s.acting_delegate_until as actingDelegateUntil,
           s.created_at as createdAt
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
@@ -854,6 +860,14 @@ async function updateEmployee(req, res, next) {
       }
     }
 
+    // Ensure acting_delegate_* columns exist on staff_users
+    try {
+      const [colCheck] = await pool.query("SHOW COLUMNS FROM `staff_users` LIKE 'acting_delegate_id'");
+      if (colCheck.length === 0) {
+        await pool.query("ALTER TABLE `staff_users` ADD COLUMN `acting_delegate_id` INT NULL, ADD COLUMN `acting_delegate_name` VARCHAR(150) NULL, ADD COLUMN `acting_delegate_until` DATE NULL");
+      }
+    } catch (_) {}
+
     // Update staff_users
     try {
       if (hasPermUpdate && hasManagedTeamsUpdate) {
@@ -893,9 +907,10 @@ async function updateEmployee(req, res, next) {
       console.warn('updateEmployee primary UPDATE failed, falling back:', err.message);
       await pool.query(`
         UPDATE staff_users 
-        SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?, branch_location = ?, working_hours = ?
+        SET full_name = ?, phone_number = ?, email = ?, role = ?, team_id = ?, branch_location = ?, working_hours = ?,
+            acting_delegate_id = ?, acting_delegate_name = ?, acting_delegate_until = ?
         WHERE id = ?
-      `, [cleanName, cleanPhone, cleanEmail, finalRole, finalTeamId, cleanBranch, cleanWorkingHours, employeeId]);
+      `, [cleanName, cleanPhone, cleanEmail, finalRole, finalTeamId, cleanBranch, cleanWorkingHours, cleanDelegateId, cleanDelegateName, cleanDelegateUntil, employeeId]);
     }
 
     // Fetch updated record with team details

@@ -41,12 +41,13 @@ function verifyStaffToken(req, res, next) {
 function getAppRole(role, designation, department, permissions) {
   if (!role && !designation && !department) return 'employee';
   const r = (role || '').toUpperCase();
+  const d = (designation || '').toLowerCase();
   const perms = Array.isArray(permissions) ? permissions : (typeof permissions === 'string' ? JSON.parse(permissions || '[]') : []);
 
-  if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD' || perms.includes('*')) return 'MD';
+  if (r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MD' || r === 'GENERAL_MANAGER' || perms.includes('*') || d.includes('it head') || d.includes('general manager') || d.includes('director')) return 'MD';
   if (r === 'COUPON_HEAD') return 'coupon_head';
-  if (r === 'HR') return 'hr';
-  if (r === 'LEAD' || r === 'TEAM_LEAD') return 'lead';
+  if (r === 'HR' || d.includes('hr')) return 'hr';
+  if (r === 'LEAD' || r === 'TEAM_LEAD' || d.includes('team lead')) return 'lead';
 
   return 'employee';
 }
@@ -63,6 +64,7 @@ function requireMD(req, res, next) {
   }
   const appRole = getAppRole(req.staff.role, req.staff.designation, req.staff.department, req.staff.permissions);
   const r = (req.staff.role || '').toUpperCase();
+  const d = (req.staff.designation || '').toLowerCase();
   const perms = Array.isArray(req.staff.permissions)
     ? req.staff.permissions
     : (typeof req.staff.permissions === 'string' ? JSON.parse(req.staff.permissions || '[]') : []);
@@ -70,6 +72,9 @@ function requireMD(req, res, next) {
   const isExecutiveAdmin =
     appRole === 'MD' ||
     ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'IT_HEAD', 'GENERAL_MANAGER'].includes(r) ||
+    d.includes('it head') ||
+    d.includes('general manager') ||
+    d.includes('director') ||
     perms.includes('*') ||
     perms.includes('employees_manage');
 
