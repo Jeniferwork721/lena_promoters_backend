@@ -721,7 +721,7 @@ async function getLeaves(req, res, next) {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const offset = (page - 1) * limit;
 
-    const { status, stage, department, q, month, date, from, to, leaveType, type, leaveFor } = req.query;
+    const { status, stage, department, q, month, date, from, to, leaveType, type, leaveFor, employeeId } = req.query;
 
     let where = ['1=1'];
     let params = [];
@@ -752,8 +752,8 @@ async function getLeaves(req, res, next) {
     // Filter by stage / pending my approval
     if (stage === 'pending_my_approval') {
       if (isHR || isMD) {
-        // HR / MD acts on final approval stage (and permissions)
-        where.push("la.status = 'PENDING_HR'");
+        // HR / MD sees all pending approvals company-wide: PENDING_HR (ready for final sign-off), plus PENDING_TL and PENDING_GM which HR can direct-approve
+        where.push("la.status IN ('PENDING_HR', 'PENDING_TL', 'PENDING_GM')");
       } else if (isGM) {
         // GM only acts after TL has approved (PENDING_GM). Does not see PENDING_TL or permissions.
         where.push("la.status = 'PENDING_GM' AND la.leave_for != 'PERMISSION'");
@@ -775,8 +775,13 @@ async function getLeaves(req, res, next) {
     }
 
     if (date) {
-      where.push('(? BETWEEN la.period_from AND la.period_to OR DATE(la.application_date) = ?)');
-      params.push(date, date);
+      where.push('? BETWEEN la.period_from AND la.period_to');
+      params.push(date);
+    }
+
+    if (employeeId && employeeId !== 'ALL') {
+      where.push('la.employee_id = ?');
+      params.push(employeeId);
     }
 
     if (leaveType === 'LEAVE' || type === 'leave') {
@@ -997,13 +1002,13 @@ async function approveLeave(req, res, next) {
       });
     }
 
-    // 1. Direct HR/MD final bypass
-    if (action === 'DIRECT_HR_APPROVE') {
+    // 1. Direct HR/MD final bypass or HR direct approval at any stage
+    if (action === 'DIRECT_HR_APPROVE' || ((isHR || isMD) && action === 'HR_APPROVE')) {
       if (!isHR && !isMD) {
         return res.status(403).json({ success: false, message: 'Only HR or Managing Director can grant direct final approval.' });
       }
-      const tlStatus = leave.tl_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
-      const gmStatus = leave.gm_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
+      const tlStatus = leave.tl_status === 'APPROVED' ? 'APPROVED' : (leave.tl_status === 'REJECTED' ? 'REJECTED' : 'SKIPPED');
+      const gmStatus = leave.gm_status === 'APPROVED' ? 'APPROVED' : (leave.gm_status === 'REJECTED' ? 'REJECTED' : 'SKIPPED');
 
       await pool.query(
         `UPDATE leave_applications 
@@ -1021,7 +1026,7 @@ async function approveLeave(req, res, next) {
 
       return res.status(200).json({
         success: true,
-        message: 'Leave directly approved by HR / Management.',
+        message: 'Leave officially approved by HR / Management.',
         stage: 'APPROVED',
       });
     }
