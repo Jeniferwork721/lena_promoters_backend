@@ -1289,16 +1289,48 @@ async function getMonthlyLeaveSummary(req, res, next) {
         }
       } catch (_) {}
     }
+
+    // Check for active delegations (TL/GM/HR on approved leave designated caller as acting rep)
+    const activeDelegations = await getActiveDelegations(callerId);
+    let actingHR = false;
+    let actingGM = false;
+    let actingLead = false;
+    const delegatedLeadIds = [];
+
+    activeDelegations.forEach((d) => {
+      delegatedLeadIds.push(d.delegatorId);
+      const dRole = (d.delegatorRole || '').toUpperCase();
+      const dDesig = (d.delegatorDesignation || '').toLowerCase();
+      const dPerms = d.delegatorPermissions || [];
+
+      if (['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(dRole) || dPerms.includes('*') || dPerms.includes('leaves_manage')) {
+        actingHR = true;
+      }
+      if (actingHR || dRole === 'GENERAL_MANAGER' || dDesig.includes('general manager') || dDesig.includes('gm') || dPerms.includes('leaves_gm')) {
+        actingGM = true;
+      }
+      if (['LEAD', 'TEAM_LEAD'].includes(dRole) || dPerms.includes('reports_own_team') || dPerms.includes('leaves_lead') || (d.delegatorManagedTeams && d.delegatorManagedTeams.length > 0)) {
+        actingLead = true;
+      }
+      if (Array.isArray(d.delegatorManagedTeams)) {
+        d.delegatorManagedTeams.forEach((tid) => leadTeamIds.add(Number(tid)));
+      }
+      if (d.delegatorTeamId) {
+        leadTeamIds.add(Number(d.delegatorTeamId));
+      }
+    });
+
     const teamIdList = [...leadTeamIds].filter(Boolean);
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
-    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage');
-    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm');
+    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR;
+    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm') || actingGM;
     const isLead = !isGM && (
       leadTeamIds.size > 0 ||
       ['LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
       perms.includes('reports_own_team') ||
-      perms.includes('leaves_lead')
+      perms.includes('leaves_lead') ||
+      actingLead
     );
 
     const targetMonth = req.query.month || getCurrentMonthString();
@@ -1313,12 +1345,14 @@ async function getMonthlyLeaveSummary(req, res, next) {
     } else if (isGM) {
       // GM sees company staff
     } else if (isLead) {
+      const matchStaffIds = [callerId, ...delegatedLeadIds];
+      const matchPlaceholders = matchStaffIds.map(() => '?').join(',');
       if (teamIdList.length > 0) {
-        staffWhere.push(`(s.id = ? OR s.team_id IN (${teamIdList.join(',')}))`);
-        staffParams.push(callerId);
+        staffWhere.push(`(s.id IN (${matchPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`);
+        staffParams.push(...matchStaffIds);
       } else {
-        staffWhere.push('s.id = ?');
-        staffParams.push(callerId);
+        staffWhere.push(`s.id IN (${matchPlaceholders})`);
+        staffParams.push(...matchStaffIds);
       }
     } else {
       staffWhere.push('s.id = ?');
