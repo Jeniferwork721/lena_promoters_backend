@@ -124,6 +124,9 @@ async function getEmployees(req, res, next) {
           s.personal_email as personalEmail,
           s.aadhar_doc as aadharDoc,
           s.pan_doc as panDoc,
+          s.acting_delegate_id as actingDelegateId,
+          s.acting_delegate_name as actingDelegateName,
+          s.acting_delegate_until as actingDelegateUntil,
           s.created_at as createdAt
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
@@ -163,6 +166,9 @@ async function getEmployees(req, res, next) {
           s.personal_email as personalEmail,
           s.aadhar_doc as aadharDoc,
           s.pan_doc as panDoc,
+          s.acting_delegate_id as actingDelegateId,
+          s.acting_delegate_name as actingDelegateName,
+          s.acting_delegate_until as actingDelegateUntil,
           s.created_at as createdAt
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
@@ -206,6 +212,9 @@ async function getEmployees(req, res, next) {
       personalEmail: r.personalEmail || null,
       aadharDoc: r.aadharDoc || null,
       panDoc: r.panDoc || null,
+      actingDelegateId: r.actingDelegateId || null,
+      actingDelegateName: r.actingDelegateName || null,
+      actingDelegateUntil: r.actingDelegateUntil || null,
       createdAt: r.createdAt,
     }));
 
@@ -254,6 +263,12 @@ async function createEmployee(req, res, next) {
       pan_no,
       panDoc,
       pan_doc,
+      actingDelegateId,
+      acting_delegate_id,
+      actingDelegateName,
+      acting_delegate_name,
+      actingDelegateUntil,
+      acting_delegate_until,
     } = req.body;
 
     if (!name || !name.trim()) {
@@ -708,6 +723,12 @@ async function updateEmployee(req, res, next) {
       pan_no,
       panDoc,
       pan_doc,
+      actingDelegateId,
+      acting_delegate_id,
+      actingDelegateName,
+      acting_delegate_name,
+      actingDelegateUntil,
+      acting_delegate_until,
     } = req.body;
 
     const [empRows] = await pool.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [employeeId]);
@@ -729,6 +750,9 @@ async function updateEmployee(req, res, next) {
     const cleanAadharDoc = aadharDoc !== undefined ? (aadharDoc || '').trim() : (aadhar_doc !== undefined ? (aadhar_doc || '').trim() : (currentEmp.aadhar_doc || null));
     const cleanPanNo = panNo !== undefined ? (panNo || '').trim().toUpperCase() : (pan_no !== undefined ? (pan_no || '').trim().toUpperCase() : (currentEmp.pan_no || null));
     const cleanPanDoc = panDoc !== undefined ? (panDoc || '').trim() : (pan_doc !== undefined ? (pan_doc || '').trim() : (currentEmp.pan_doc || null));
+    const cleanDelegateId = (actingDelegateId !== undefined ? (actingDelegateId ? Number(actingDelegateId) : null) : (acting_delegate_id !== undefined ? (acting_delegate_id ? Number(acting_delegate_id) : null) : (currentEmp.acting_delegate_id || null)));
+    const cleanDelegateName = (actingDelegateName !== undefined ? (actingDelegateName ? String(actingDelegateName).trim() : null) : (acting_delegate_name !== undefined ? (acting_delegate_name ? String(acting_delegate_name).trim() : null) : (currentEmp.acting_delegate_name || null)));
+    const cleanDelegateUntil = (actingDelegateUntil !== undefined ? (actingDelegateUntil || null) : (acting_delegate_until !== undefined ? (acting_delegate_until || null) : (currentEmp.acting_delegate_until || null)));
     const isExecutiveRole = ['SALES_HEAD', 'SALES_MANAGER', 'GENERAL_MANAGER', 'OVERALL_MANAGER', 'HEAD_MANAGER', 'ADMIN'].includes(cleanRole);
     const isTargetLead = !isExecutiveRole && (['LEAD', 'TEAM_LEAD'].includes(cleanRole) || req.body.responsibility === 'TEAM_LEAD');
 
@@ -836,30 +860,34 @@ async function updateEmployee(req, res, next) {
         await pool.query(`
           UPDATE staff_users 
           SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, permissions = ?, managed_teams = ?,
-              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?
+              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?,
+              acting_delegate_id = ?, acting_delegate_name = ?, acting_delegate_until = ?
           WHERE id = ?
-        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, managedTeamsJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, employeeId]);
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, managedTeamsJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, cleanDelegateId, cleanDelegateName, cleanDelegateUntil, employeeId]);
       } else if (hasPermUpdate) {
         await pool.query(`
           UPDATE staff_users 
           SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, permissions = ?,
-              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?
+              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?,
+              acting_delegate_id = ?, acting_delegate_name = ?, acting_delegate_until = ?
           WHERE id = ?
-        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, employeeId]);
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, permJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, cleanDelegateId, cleanDelegateName, cleanDelegateUntil, employeeId]);
       } else if (hasManagedTeamsUpdate) {
         await pool.query(`
           UPDATE staff_users 
           SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?, managed_teams = ?,
-              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?
+              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?,
+              acting_delegate_id = ?, acting_delegate_name = ?, acting_delegate_until = ?
           WHERE id = ?
-        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, managedTeamsJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, employeeId]);
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, managedTeamsJson, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, cleanDelegateId, cleanDelegateName, cleanDelegateUntil, employeeId]);
       } else {
         await pool.query(`
           UPDATE staff_users 
           SET full_name = ?, phone_number = ?, email = ?, role = ?, designation = ?, department = ?, team_id = ?, branch_location = ?,
-              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?
+              working_hours = ?, personal_email = ?, aadhar_no = ?, aadhar_doc = ?, pan_no = ?, pan_doc = ?,
+              acting_delegate_id = ?, acting_delegate_name = ?, acting_delegate_until = ?
           WHERE id = ?
-        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, employeeId]);
+        `, [cleanName, cleanPhone, cleanEmail, finalRole, cleanDesignation, cleanDepartment || null, finalTeamId, cleanBranch, cleanWorkingHours, cleanPersonalEmail, cleanAadharNo, cleanAadharDoc, cleanPanNo, cleanPanDoc, cleanDelegateId, cleanDelegateName, cleanDelegateUntil, employeeId]);
       }
     } catch (err) {
       console.warn('updateEmployee primary UPDATE failed, falling back:', err.message);
@@ -897,7 +925,10 @@ async function updateEmployee(req, res, next) {
           s.aadhar_no as aadharNo,
           s.aadhar_doc as aadharDoc,
           s.pan_no as panNo,
-          s.pan_doc as panDoc
+          s.pan_doc as panDoc,
+          s.acting_delegate_id as actingDelegateId,
+          s.acting_delegate_name as actingDelegateName,
+          s.acting_delegate_until as actingDelegateUntil
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
         LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
@@ -924,7 +955,10 @@ async function updateEmployee(req, res, next) {
           s.aadhar_no as aadharNo,
           s.aadhar_doc as aadharDoc,
           s.pan_no as panNo,
-          s.pan_doc as panDoc
+          s.pan_doc as panDoc,
+          s.acting_delegate_id as actingDelegateId,
+          s.acting_delegate_name as actingDelegateName,
+          s.acting_delegate_until as actingDelegateUntil
         FROM staff_users s
         LEFT JOIN teams t ON s.team_id = t.id
         LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
@@ -961,6 +995,9 @@ async function updateEmployee(req, res, next) {
         aadharDoc: updated.aadharDoc !== undefined ? updated.aadharDoc : cleanAadharDoc,
         panNo: updated.panNo !== undefined ? updated.panNo : cleanPanNo,
         panDoc: updated.panDoc !== undefined ? updated.panDoc : cleanPanDoc,
+        actingDelegateId: updated.actingDelegateId !== undefined ? updated.actingDelegateId : cleanDelegateId,
+        actingDelegateName: updated.actingDelegateName !== undefined ? updated.actingDelegateName : cleanDelegateName,
+        actingDelegateUntil: updated.actingDelegateUntil !== undefined ? updated.actingDelegateUntil : cleanDelegateUntil,
       },
     });
   } catch (err) {

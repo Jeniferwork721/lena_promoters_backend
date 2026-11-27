@@ -209,7 +209,8 @@ async function getActiveDelegations(staffId) {
   if (!staffId) return [];
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const [rows] = await pool.query(
+    // 1. Delegations from approved leave applications where delegator assigned this representative
+    const [leaveRows] = await pool.query(
       `SELECT la.id as leave_id, la.employee_id as delegator_id, la.employee_name as delegator_name,
               s.role as delegator_role, s.designation as delegator_designation,
               s.permissions as delegator_permissions, s.managed_teams as delegator_managed_teams,
@@ -221,28 +222,48 @@ async function getActiveDelegations(staffId) {
          AND ? BETWEEN la.period_from AND la.period_to`,
       [staffId, today]
     );
-    return rows.map((r) => {
-      let managedTeams = [];
-      try {
-        if (r.delegator_managed_teams) {
-          managedTeams = typeof r.delegator_managed_teams === 'string'
-            ? JSON.parse(r.delegator_managed_teams)
-            : r.delegator_managed_teams;
-        }
-      } catch (_) {}
-      return {
-        leaveId: r.leave_id,
-        delegatorId: r.delegator_id,
-        delegatorName: r.delegator_name,
-        delegatorRole: r.delegator_role,
-        delegatorDesignation: r.delegator_designation,
-        delegatorPermissions: parsePermissions(r.delegator_permissions),
-        delegatorManagedTeams: managedTeams,
-        delegatorTeamId: r.delegator_team_id,
-        periodFrom: formatDateToYmd(r.period_from),
-        periodTo: formatDateToYmd(r.period_to),
-      };
-    });
+
+    // 2. Direct delegations assigned in staff profile (e.g. GM assigning Sales Head for 1 day or active)
+    const [directRows] = await pool.query(
+      `SELECT NULL as leave_id, s.id as delegator_id, s.full_name as delegator_name,
+              s.role as delegator_role, s.designation as delegator_designation,
+              s.permissions as delegator_permissions, s.managed_teams as delegator_managed_teams,
+              s.team_id as delegator_team_id, CURDATE() as period_from, s.acting_delegate_until as period_to
+       FROM staff_users s
+       WHERE s.acting_delegate_id = ?
+         AND (s.acting_delegate_until IS NULL OR s.acting_delegate_until >= CURDATE())`,
+      [staffId]
+    );
+
+    const combined = [...leaveRows, ...directRows];
+    const seen = new Set();
+    const result = [];
+    for (const r of combined) {
+      if (!seen.has(r.delegator_id)) {
+        seen.add(r.delegator_id);
+        let managedTeams = [];
+        try {
+          if (r.delegator_managed_teams) {
+            managedTeams = typeof r.delegator_managed_teams === 'string'
+              ? JSON.parse(r.delegator_managed_teams)
+              : r.delegator_managed_teams;
+          }
+        } catch (_) {}
+        result.push({
+          leaveId: r.leave_id,
+          delegatorId: r.delegator_id,
+          delegatorName: r.delegator_name,
+          delegatorRole: r.delegator_role,
+          delegatorDesignation: r.delegator_designation,
+          delegatorPermissions: parsePermissions(r.delegator_permissions),
+          delegatorManagedTeams: managedTeams,
+          delegatorTeamId: r.delegator_team_id,
+          periodFrom: r.period_from ? formatDateToYmd(r.period_from) : null,
+          periodTo: r.period_to ? formatDateToYmd(r.period_to) : null,
+        });
+      }
+    }
+    return result;
   } catch (_) {
     return [];
   }

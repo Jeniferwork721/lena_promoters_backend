@@ -73,6 +73,9 @@ async function initializeDatabase() {
       { name: 'aadhar_doc', def: "VARCHAR(255) NULL" },
       { name: 'pan_no', def: "VARCHAR(50) NULL" },
       { name: 'pan_doc', def: "VARCHAR(255) NULL" },
+      { name: 'acting_delegate_id', def: "INT NULL" },
+      { name: 'acting_delegate_name', def: "VARCHAR(150) NULL" },
+      { name: 'acting_delegate_until', def: "DATE NULL" },
     ];
     for (const col of criticalStaffCols) {
       try {

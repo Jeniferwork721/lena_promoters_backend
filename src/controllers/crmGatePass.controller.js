@@ -42,7 +42,8 @@ async function getActiveDelegations(staffId) {
   if (!staffId) return [];
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const [rows] = await pool.query(
+    // 1. Delegations from approved leave applications
+    const [leaveRows] = await pool.query(
       `SELECT la.id as leave_id, la.employee_id as delegator_id, la.employee_name as delegator_name,
               s.role as delegator_role, s.designation as delegator_designation,
               s.permissions as delegator_permissions, s.managed_teams as delegator_managed_teams,
@@ -54,16 +55,46 @@ async function getActiveDelegations(staffId) {
          AND ? BETWEEN la.period_from AND la.period_to`,
       [staffId, today]
     );
-    return rows.map((r) => ({
-      leaveId: r.leave_id,
-      delegatorId: r.delegator_id,
-      delegatorName: r.delegator_name,
-      delegatorRole: r.delegator_role,
-      delegatorDesignation: r.delegator_designation,
-      delegatorPermissions: parsePermissions(r.delegator_permissions),
-      delegatorManagedTeams: r.delegator_managed_teams ? (typeof r.delegator_managed_teams === 'string' ? JSON.parse(r.delegator_managed_teams || '[]') : r.delegator_managed_teams) : [],
-      delegatorTeamId: r.delegator_team_id,
-    }));
+
+    // 2. Direct delegations configured on staff profile (+1 person delegation)
+    const [directRows] = await pool.query(
+      `SELECT NULL as leave_id, s.id as delegator_id, s.full_name as delegator_name,
+              s.role as delegator_role, s.designation as delegator_designation,
+              s.permissions as delegator_permissions, s.managed_teams as delegator_managed_teams,
+              s.team_id as delegator_team_id
+       FROM staff_users s
+       WHERE s.acting_delegate_id = ?
+         AND (s.acting_delegate_until IS NULL OR s.acting_delegate_until >= CURDATE())`,
+      [staffId]
+    );
+
+    const combined = [...leaveRows, ...directRows];
+    const seen = new Set();
+    const result = [];
+    for (const r of combined) {
+      if (!seen.has(r.delegator_id)) {
+        seen.add(r.delegator_id);
+        let managedTeams = [];
+        try {
+          if (r.delegator_managed_teams) {
+            managedTeams = typeof r.delegator_managed_teams === 'string'
+              ? JSON.parse(r.delegator_managed_teams)
+              : r.delegator_managed_teams;
+          }
+        } catch (_) {}
+        result.push({
+          leaveId: r.leave_id,
+          delegatorId: r.delegator_id,
+          delegatorName: r.delegator_name,
+          delegatorRole: r.delegator_role,
+          delegatorDesignation: r.delegator_designation,
+          delegatorPermissions: parsePermissions(r.delegator_permissions),
+          delegatorManagedTeams: managedTeams,
+          delegatorTeamId: r.delegator_team_id,
+        });
+      }
+    }
+    return result;
   } catch (_) {
     return [];
   }
@@ -103,29 +134,31 @@ function formatGatePass(gp) {
 }
 
 /**
- * Generate unique Gate Pass Number: GP-YYYYMM-XXXX
+ * Generate unique daily Gate Pass Number: DDMMYYYY001, DDMMYYYY002...
+ * Daily sequence resetting to 001 every day.
  */
 async function generateNextGatePassNumber() {
   const d = new Date();
-  const yyyy = d.getFullYear();
+  const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const prefix = `GP-${yyyy}${mm}-`;
+  const yyyy = String(d.getFullYear());
+  const datePrefix = `${dd}${mm}${yyyy}`; // e.g. 27112026
 
   const [rows] = await pool.query(
     `SELECT pass_number FROM gate_passes 
      WHERE pass_number LIKE ? 
-     ORDER BY id DESC LIMIT 1`,
-    [`${prefix}%`]
+     ORDER BY pass_number DESC LIMIT 1`,
+    [`${datePrefix}%`]
   );
 
   let seq = 1;
   if (rows.length > 0 && rows[0].pass_number) {
-    const parts = rows[0].pass_number.split('-');
-    const lastNum = parseInt(parts[parts.length - 1], 10);
+    const lastNumStr = rows[0].pass_number.slice(datePrefix.length);
+    const lastNum = parseInt(lastNumStr, 10);
     if (!isNaN(lastNum)) seq = lastNum + 1;
   }
 
-  return `${prefix}${String(seq).padStart(4, '0')}`;
+  return `${datePrefix}${String(seq).padStart(3, '0')}`;
 }
 
 /**
@@ -507,24 +540,24 @@ async function approveGatePass(req, res, next) {
     const roleUpper = (req.staff?.role || '').toUpperCase();
 
     const activeDelegations = await getActiveDelegations(callerId);
+    let actingHR = false;
     let delegatorName = null;
-    let canApprove =
-      ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
-      perms.includes('*') ||
-      perms.includes('leaves_manage') ||
-      perms.includes('leaves_gm') ||
-      perms.includes('gatepass_approve') ||
-      perms.includes('reports_own_team');
+    activeDelegations.forEach((d) => {
+      const dRole = (d.delegatorRole || '').toUpperCase();
+      const dPerms = d.delegatorPermissions || [];
+      if (['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(dRole) || dPerms.includes('*') || dPerms.includes('leaves_manage') || dPerms.includes('gatepass_approve')) {
+        actingHR = true;
+        if (!delegatorName) delegatorName = d.delegatorName;
+      }
+    });
 
-    if (activeDelegations.length > 0) {
-      canApprove = true;
-      delegatorName = activeDelegations[0].delegatorName;
-    }
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
+    const isHR = roleUpper === 'HR' || perms.includes('leaves_manage') || perms.includes('gatepass_approve') || actingHR || isMD;
 
-    if (!canApprove) {
+    if (!isHR) {
       return res.status(403).json({
         success: false,
-        message: 'Only Team Leads, General Managers, HR, or Admin can approve gate passes.',
+        message: 'Gate pass must be approved by HR or Management only.',
       });
     }
 
@@ -568,22 +601,22 @@ async function rejectGatePass(req, res, next) {
     const roleUpper = (req.staff?.role || '').toUpperCase();
 
     const activeDelegations = await getActiveDelegations(callerId);
+    let actingHR = false;
     let delegatorName = null;
-    let canApprove =
-      ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER', 'LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
-      perms.includes('*') ||
-      perms.includes('leaves_manage') ||
-      perms.includes('leaves_gm') ||
-      perms.includes('gatepass_approve') ||
-      perms.includes('reports_own_team');
+    activeDelegations.forEach((d) => {
+      const dRole = (d.delegatorRole || '').toUpperCase();
+      const dPerms = d.delegatorPermissions || [];
+      if (['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(dRole) || dPerms.includes('*') || dPerms.includes('leaves_manage') || dPerms.includes('gatepass_approve')) {
+        actingHR = true;
+        if (!delegatorName) delegatorName = d.delegatorName;
+      }
+    });
 
-    if (activeDelegations.length > 0) {
-      canApprove = true;
-      delegatorName = activeDelegations[0].delegatorName;
-    }
+    const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
+    const isHR = roleUpper === 'HR' || perms.includes('leaves_manage') || perms.includes('gatepass_approve') || actingHR || isMD;
 
-    if (!canApprove) {
-      return res.status(403).json({ success: false, message: 'Unauthorized to reject gate pass.' });
+    if (!isHR) {
+      return res.status(403).json({ success: false, message: 'Gate pass can only be rejected by HR or Management.' });
     }
 
     const recordedName = delegatorName ? `${callerName} (Acting for ${delegatorName})` : callerName;
