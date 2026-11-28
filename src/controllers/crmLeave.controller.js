@@ -120,6 +120,18 @@ function formatLeaveRow(la) {
     tl_comments: la.tl_comments || '',
     tlActionAt: la.tl_action_at || null,
     tl_action_at: la.tl_action_at || null,
+    salesHeadId: la.sales_head_id || null,
+    sales_head_id: la.sales_head_id || null,
+    salesHeadStatus: la.sales_head_status || 'PENDING',
+    sales_head_status: la.sales_head_status || 'PENDING',
+    salesHeadApprovedBy: la.sales_head_approved_by || null,
+    sales_head_approved_by: la.sales_head_approved_by || null,
+    salesHeadApprovedName: la.sales_head_approved_name || null,
+    sales_head_approved_name: la.sales_head_approved_name || null,
+    salesHeadComments: la.sales_head_comments || '',
+    sales_head_comments: la.sales_head_comments || '',
+    salesHeadActionAt: la.sales_head_action_at || null,
+    sales_head_action_at: la.sales_head_action_at || null,
     gmId: la.gm_id || null,
     gm_id: la.gm_id || null,
     gmStatus: la.gm_status || 'PENDING',
@@ -432,10 +444,11 @@ async function applyLeave(req, res, next) {
 
     const finalSign = signature || req.body.employeeSignature || staff.name || null;
 
-    // Determine 3-tier approval starting stage
-    // TL -> GM -> HR
+    // Determine 4-tier approval starting stage
+    // TL (Stage 1) -> Sales Head (Stage 2) -> GM (Stage 3) -> HR (Stage 4)
     let tlId = staff.lead_id ? Number(staff.lead_id) : null;
     let tlStatus = 'PENDING';
+    let salesHeadStatus = 'PENDING';
     let gmStatus = 'PENDING';
     let hrStatus = 'PENDING';
     let initialStatus = 'PENDING_TL';
@@ -444,31 +457,40 @@ async function applyLeave(req, res, next) {
     const desigLower = (staff.designation || '').toLowerCase();
     const perms = parsePermissions(req.staff?.permissions);
 
-    const isGM = roleUpper === 'GENERAL_MANAGER' || desigLower.includes('general manager') || desigLower.includes('gm') || perms.includes('leaves_gm');
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
+    const isGM = roleUpper === 'GENERAL_MANAGER' || desigLower.includes('general manager') || desigLower.includes('gm') || perms.includes('leaves_gm');
+    const isSalesHead = roleUpper === 'SALES_HEAD' || desigLower.includes('sales head') || perms.includes('leaves_sales_head');
     const isTeamLead = staff.lead_id && String(staff.lead_id) === String(callerId);
 
     if (leaveFor === 'PERMISSION') {
-      // Permission requests are approved strictly by HR only
+      // Permission requests are approved strictly by HR (or delegated staff) only
       tlStatus = 'SKIPPED';
+      salesHeadStatus = 'SKIPPED';
       gmStatus = 'SKIPPED';
       hrStatus = 'PENDING';
       initialStatus = 'PENDING_HR';
     } else if (isMD) {
       // MD applies -> auto-approved
       tlStatus = 'SKIPPED';
+      salesHeadStatus = 'SKIPPED';
       gmStatus = 'SKIPPED';
       hrStatus = 'APPROVED';
       initialStatus = 'APPROVED';
     } else if (isGM) {
-      // GM applies -> skips TL & GM, goes directly to HR
+      // GM applies -> skips TL, Sales Head & GM, goes directly to HR
       tlStatus = 'SKIPPED';
+      salesHeadStatus = 'SKIPPED';
       gmStatus = 'SKIPPED';
       initialStatus = 'PENDING_HR';
-    } else if (isTeamLead || !tlId || String(tlId) === String(callerId)) {
-      // Team lead or staff with no team lead -> skips TL, goes to GM
+    } else if (isSalesHead) {
+      // Sales Head applies -> skips TL & Sales Head, goes to GM
       tlStatus = 'SKIPPED';
+      salesHeadStatus = 'SKIPPED';
       initialStatus = 'PENDING_GM';
+    } else if (isTeamLead || !tlId || String(tlId) === String(callerId)) {
+      // Team lead or staff with no team lead -> skips TL, goes to Sales Head
+      tlStatus = 'SKIPPED';
+      initialStatus = 'PENDING_SALES_HEAD';
     }
 
     const [result] = await pool.query(
@@ -479,8 +501,8 @@ async function applyLeave(req, res, next) {
         already_took_leave_count, already_took_permission_count,
         reason, handover_person_id, handover_person_name, handover_work_details,
         acting_representative_id, acting_representative_name,
-        employee_signature, tl_id, tl_status, gm_status, hr_status, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        employee_signature, tl_id, tl_status, sales_head_status, gm_status, hr_status, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         callerId,
         staff.employeeCode,
@@ -506,11 +528,24 @@ async function applyLeave(req, res, next) {
         finalSign,
         tlId,
         tlStatus,
+        salesHeadStatus,
         gmStatus,
         hrStatus,
         initialStatus,
       ]
     );
+
+    // Sync acting representative to staff_users profile immediately
+    if (actingRepresentativeId) {
+      try {
+        await pool.query(
+          `UPDATE staff_users 
+           SET acting_delegate_id = ?, acting_delegate_name = ?, acting_delegate_until = ?
+           WHERE id = ?`,
+          [Number(actingRepresentativeId), actingRepresentativeName || null, toDate || null, callerId]
+        );
+      } catch (_) {}
+    }
 
     const newId = result.insertId;
 
@@ -674,10 +709,11 @@ async function getLeaves(req, res, next) {
       } catch (_) {}
     }
 
-    // Check for active delegations (TL/GM/HR on approved leave designated caller as acting rep)
+    // Check for active delegations (TL/GM/Sales Head/HR on approved leave designated caller as acting rep)
     const activeDelegations = await getActiveDelegations(callerId);
     let actingHR = false;
     let actingGM = false;
+    let actingSalesHead = false;
     let actingLead = false;
     const delegatedLeadIds = [];
 
@@ -692,6 +728,9 @@ async function getLeaves(req, res, next) {
       }
       if (actingHR || dRole === 'GENERAL_MANAGER' || dDesig.includes('general manager') || dDesig.includes('gm') || dPerms.includes('leaves_gm')) {
         actingGM = true;
+      }
+      if (actingHR || dRole === 'SALES_HEAD' || dDesig.includes('sales head') || dPerms.includes('leaves_sales_head')) {
+        actingSalesHead = true;
       }
       if (['LEAD', 'TEAM_LEAD'].includes(dRole) || dPerms.includes('reports_own_team') || dPerms.includes('leaves_lead') || (d.delegatorManagedTeams && d.delegatorManagedTeams.length > 0)) {
         actingLead = true;
@@ -708,15 +747,14 @@ async function getLeaves(req, res, next) {
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
     const isHR = !isMD && (roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR);
-    const isGM = !isMD && !isHR && (['GENERAL_MANAGER', 'SALES_HEAD'].includes(roleUpper) || perms.includes('leaves_gm') || actingGM);
-    const isLead = !isMD && !isHR && !isGM && (
-      leadTeamIds.size > 0 ||
-      ['LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
-      perms.includes('reports_own_team') ||
-      perms.includes('leaves_lead') ||
-      actingLead
-    );
+    const canApproveGM = isMD || isHR || ['GENERAL_MANAGER'].includes(roleUpper) || perms.includes('leaves_gm') || actingGM;
+    const canApproveSalesHead = isMD || isHR || ['SALES_HEAD'].includes(roleUpper) || perms.includes('leaves_sales_head') || perms.includes('leaves_gm') || actingSalesHead;
+    const canApproveLead = isMD || isHR || leadTeamIds.size > 0 || ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team') || perms.includes('leaves_lead') || actingLead;
     const canApprovePermissions = isMD || isHR || perms.includes('permissions_approve') || perms.includes('leaves_manage');
+
+    const isGM = !isMD && !isHR && (['GENERAL_MANAGER'].includes(roleUpper) || perms.includes('leaves_gm') || actingGM);
+    const isSalesHead = !isMD && !isHR && !isGM && (['SALES_HEAD'].includes(roleUpper) || perms.includes('leaves_sales_head') || actingSalesHead);
+    const isLead = !isMD && !isHR && !isGM && !isSalesHead && canApproveLead;
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
@@ -730,8 +768,8 @@ async function getLeaves(req, res, next) {
     // Role-based scope
     if (isHR || isMD) {
       // HR/MD sees all staff leaves
-    } else if (isGM) {
-      // GM sees all company leaves (except MD)
+    } else if (isGM || isSalesHead) {
+      // GM / Sales Head sees all company staff leaves (except MD)
       where.push("s.role NOT IN ('ADMIN', 'SUPER_ADMIN')");
     } else if (isLead) {
       // Team lead sees own leaves + leaves assigned to them (or delegated to them) + leaves of teammates in lead teams
@@ -750,35 +788,38 @@ async function getLeaves(req, res, next) {
       params.push(callerId);
     }
 
-    // Filter by stage / pending my approval
+    // Filter by stage / pending my approval (4-Tier Compulsory Flow)
     if (stage === 'pending_my_approval') {
       if (isHR || isMD) {
-        // HR / MD sees all pending approvals company-wide: PENDING_HR (ready for final sign-off), plus PENDING_TL and PENDING_GM which HR can direct-approve
-        where.push("la.status IN ('PENDING_HR', 'PENDING_TL', 'PENDING_GM')");
-      } else if (isGM) {
-        // GM only acts after TL has approved (PENDING_GM). Permissions only shown if granted permissions_approve
-        if (canApprovePermissions) {
-          where.push("(la.status = 'PENDING_GM' OR (la.leave_for = 'PERMISSION' AND la.status IN ('PENDING_HR', 'PENDING')))");
-        } else {
-          where.push("la.status = 'PENDING_GM' AND la.leave_for != 'PERMISSION'");
-        }
-      } else if (isLead) {
-        // TL acts only on PENDING_TL for their team. Permissions only shown if granted permissions_approve
-        const tlMatchList = [callerId, ...delegatedLeadIds];
-        const tlPlaceholders = tlMatchList.map(() => '?').join(',');
-        const teamFilter = teamIdList.length > 0
-          ? `(la.tl_id IN (${tlPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`
-          : `la.tl_id IN (${tlPlaceholders})`;
-
-        if (canApprovePermissions) {
-          where.push(`((la.status = 'PENDING_TL' AND la.leave_for != 'PERMISSION') OR (la.leave_for = 'PERMISSION' AND la.status IN ('PENDING_HR', 'PENDING'))) AND ${teamFilter}`);
-          params.push(...tlMatchList);
-        } else {
-          where.push(`la.status = 'PENDING_TL' AND la.leave_for != 'PERMISSION' AND ${teamFilter}`);
-          params.push(...tlMatchList);
-        }
+        // HR / MD sees all 4 pending stages company-wide
+        where.push("la.status IN ('PENDING_HR', 'PENDING_GM', 'PENDING_SALES_HEAD', 'PENDING_TL')");
       } else {
-        where.push('1=0');
+        const myStageClauses = [];
+        if (canApproveGM) {
+          myStageClauses.push("la.status = 'PENDING_GM'");
+        }
+        if (canApproveSalesHead) {
+          myStageClauses.push("la.status = 'PENDING_SALES_HEAD'");
+        }
+        if (canApproveLead) {
+          const tlMatchList = [callerId, ...delegatedLeadIds];
+          const tlPlaceholders = tlMatchList.map(() => '?').join(',');
+          const teamFilter = teamIdList.length > 0
+            ? `(la.tl_id IN (${tlPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`
+            : `la.tl_id IN (${tlPlaceholders})`;
+          myStageClauses.push(`(la.status = 'PENDING_TL' AND ${teamFilter})`);
+          params.push(...tlMatchList);
+        }
+        if (canApprovePermissions) {
+          myStageClauses.push("(la.leave_for = 'PERMISSION' AND la.status IN ('PENDING_HR', 'PENDING'))");
+        }
+
+        if (myStageClauses.length > 0) {
+          const permFilter = canApprovePermissions ? '' : "AND la.leave_for != 'PERMISSION'";
+          where.push(`(${myStageClauses.join(' OR ')}) ${permFilter}`);
+        } else {
+          where.push('1=0');
+        }
       }
     } else if (status && status !== 'ALL') {
       where.push('la.status = ?');
@@ -871,6 +912,7 @@ async function getLeaves(req, res, next) {
     const [countsRows] = await pool.query(
       `SELECT 
         SUM(CASE WHEN la.status = 'PENDING_TL' THEN 1 ELSE 0 END) as pendingTL,
+        SUM(CASE WHEN la.status = 'PENDING_SALES_HEAD' THEN 1 ELSE 0 END) as pendingSalesHead,
         SUM(CASE WHEN la.status = 'PENDING_GM' THEN 1 ELSE 0 END) as pendingGM,
         SUM(CASE WHEN la.status = 'PENDING_HR' THEN 1 ELSE 0 END) as pendingHR,
         SUM(CASE WHEN la.status = 'APPROVED' THEN 1 ELSE 0 END) as approved,
@@ -950,6 +992,7 @@ async function approveLeave(req, res, next) {
     const activeDelegations = await getActiveDelegations(callerId);
     let actingHR = false;
     let actingGM = false;
+    let actingSalesHead = false;
     let actingLead = false;
     let delegatorName = null;
     const delegatedLeadIds = [];
@@ -967,6 +1010,9 @@ async function approveLeave(req, res, next) {
       if (actingHR || dRole === 'GENERAL_MANAGER' || dDesig.includes('general manager') || dDesig.includes('gm') || dPerms.includes('leaves_gm')) {
         actingGM = true;
       }
+      if (actingHR || dRole === 'SALES_HEAD' || dDesig.includes('sales head') || dPerms.includes('leaves_sales_head')) {
+        actingSalesHead = true;
+      }
       if (['LEAD', 'TEAM_LEAD'].includes(dRole) || dPerms.includes('reports_own_team') || dPerms.includes('leaves_lead') || (d.delegatorManagedTeams && d.delegatorManagedTeams.length > 0)) {
         actingLead = true;
       }
@@ -974,15 +1020,10 @@ async function approveLeave(req, res, next) {
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
     const isHR = !isMD && (roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR);
-    const isGM = (
-      roleUpper === 'GENERAL_MANAGER' ||
-      roleUpper === 'SALES_HEAD' ||
-      desigLower.includes('general manager') ||
-      desigLower.includes('gm') ||
-      perms.includes('leaves_gm') ||
-      actingGM ||
-      isMD
-    );
+    const isGM = !isMD && !isHR && (['GENERAL_MANAGER'].includes(roleUpper) || perms.includes('leaves_gm') || actingGM);
+    const isSalesHead = !isMD && !isHR && !isGM && (['SALES_HEAD'].includes(roleUpper) || perms.includes('leaves_sales_head') || actingSalesHead);
+    const canApproveGM = isMD || isHR || isGM || perms.includes('leaves_gm') || actingGM;
+    const canApproveSalesHead = isMD || isHR || isSalesHead || perms.includes('leaves_sales_head') || perms.includes('leaves_gm') || actingSalesHead;
     const canApprovePermissions = isMD || isHR || perms.includes('permissions_approve') || perms.includes('leaves_manage');
 
     const [rows] = await pool.query(
@@ -1024,11 +1065,13 @@ async function approveLeave(req, res, next) {
         return res.status(403).json({ success: false, message: 'Only HR or Managing Director can grant direct final approval.' });
       }
       const tlStatus = leave.tl_status === 'APPROVED' ? 'APPROVED' : (leave.tl_status === 'REJECTED' ? 'REJECTED' : 'SKIPPED');
+      const salesHeadStatus = leave.sales_head_status === 'APPROVED' ? 'APPROVED' : (leave.sales_head_status === 'REJECTED' ? 'REJECTED' : 'SKIPPED');
       const gmStatus = leave.gm_status === 'APPROVED' ? 'APPROVED' : (leave.gm_status === 'REJECTED' ? 'REJECTED' : 'SKIPPED');
 
       await pool.query(
         `UPDATE leave_applications 
          SET tl_status = ?,
+             sales_head_status = ?,
              gm_status = ?,
              hr_status = 'APPROVED',
              hr_approved_by = ?,
@@ -1037,7 +1080,7 @@ async function approveLeave(req, res, next) {
              hr_action_at = ?,
              status = 'APPROVED'
          WHERE id = ?`,
-        [tlStatus, gmStatus, callerId, recordedName, comments, now, leaveId]
+        [tlStatus, salesHeadStatus, gmStatus, callerId, recordedName, comments, now, leaveId]
       );
 
       return res.status(200).json({
@@ -1048,7 +1091,7 @@ async function approveLeave(req, res, next) {
     }
 
     // 2. Stage 1: Team Lead (TL) Approval
-    if (action === 'TL_APPROVE' || (leave.status === 'PENDING_TL' && action !== 'GM_APPROVE' && action !== 'HR_APPROVE')) {
+    if (action === 'TL_APPROVE' || (leave.status === 'PENDING_TL' && !['SALES_HEAD_APPROVE', 'GM_APPROVE', 'HR_APPROVE', 'DIRECT_HR_APPROVE'].includes(action))) {
       const isAssignedTL = (leave.tl_id && String(leave.tl_id) === String(callerId)) ||
         delegatedLeadIds.some((did) => String(leave.tl_id) === String(did));
       const isLead = isAssignedTL || ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team') || perms.includes('leaves_lead') || actingLead || isMD;
@@ -1066,24 +1109,24 @@ async function approveLeave(req, res, next) {
              tl_approved_name = ?,
              tl_comments = ?,
              tl_action_at = ?,
-             status = 'PENDING_GM'
+             status = 'PENDING_SALES_HEAD'
          WHERE id = ?`,
         [callerId, recordedName, comments, now, leaveId]
       );
 
       return res.status(200).json({
         success: true,
-        message: 'Leave approved by Team Lead. Forwarded to General Manager for review.',
-        stage: 'PENDING_GM',
+        message: 'Leave verified by Team Lead. Forwarded to Sales Head for review.',
+        stage: 'PENDING_SALES_HEAD',
       });
     }
 
-    // 3. Stage 2: General Manager (GM) Approval
-    if (action === 'GM_APPROVE' || (leave.status === 'PENDING_GM' && action !== 'HR_APPROVE')) {
-      if (!isGM && !isHR && !isMD) {
+    // 3. Stage 2: Sales Head Approval
+    if (action === 'SALES_HEAD_APPROVE' || (leave.status === 'PENDING_SALES_HEAD' && !['GM_APPROVE', 'HR_APPROVE', 'DIRECT_HR_APPROVE'].includes(action))) {
+      if (!canApproveSalesHead) {
         return res.status(403).json({
           success: false,
-          message: 'Only the General Manager or HR/MD can approve at this stage.',
+          message: 'Only the Sales Head, General Manager, or authorized management can approve at this stage.',
         });
       }
 
@@ -1092,6 +1135,39 @@ async function approveLeave(req, res, next) {
       await pool.query(
         `UPDATE leave_applications 
          SET tl_status = ?,
+             sales_head_status = 'APPROVED',
+             sales_head_approved_by = ?,
+             sales_head_approved_name = ?,
+             sales_head_comments = ?,
+             sales_head_action_at = ?,
+             status = 'PENDING_GM'
+         WHERE id = ?`,
+        [tlStatus, callerId, recordedName, comments, now, leaveId]
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Leave reviewed by Sales Head. Forwarded to General Manager for review.',
+        stage: 'PENDING_GM',
+      });
+    }
+
+    // 4. Stage 3: General Manager (GM) Approval
+    if (action === 'GM_APPROVE' || (leave.status === 'PENDING_GM' && !['HR_APPROVE', 'DIRECT_HR_APPROVE'].includes(action))) {
+      if (!canApproveGM) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only the General Manager or HR/MD can approve at this stage.',
+        });
+      }
+
+      const tlStatus = leave.tl_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
+      const salesHeadStatus = leave.sales_head_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
+
+      await pool.query(
+        `UPDATE leave_applications 
+         SET tl_status = ?,
+             sales_head_status = ?,
              gm_status = 'APPROVED',
              gm_approved_by = ?,
              gm_approved_name = ?,
@@ -1099,7 +1175,7 @@ async function approveLeave(req, res, next) {
              gm_action_at = ?,
              status = 'PENDING_HR'
          WHERE id = ?`,
-        [tlStatus, callerId, recordedName, comments, now, leaveId]
+        [tlStatus, salesHeadStatus, callerId, recordedName, comments, now, leaveId]
       );
 
       return res.status(200).json({
@@ -1109,7 +1185,7 @@ async function approveLeave(req, res, next) {
       });
     }
 
-    // 4. Stage 3: Final HR Approval
+    // 5. Stage 4: Final HR Approval
     if (action === 'HR_APPROVE' || leave.status === 'PENDING_HR') {
       if (!isHR && !isMD) {
         return res.status(403).json({
@@ -1119,11 +1195,13 @@ async function approveLeave(req, res, next) {
       }
 
       const tlStatus = leave.tl_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
+      const salesHeadStatus = leave.sales_head_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
       const gmStatus = leave.gm_status === 'APPROVED' ? 'APPROVED' : 'SKIPPED';
 
       await pool.query(
         `UPDATE leave_applications 
          SET tl_status = ?,
+             sales_head_status = ?,
              gm_status = ?,
              hr_status = 'APPROVED',
              hr_approved_by = ?,
@@ -1132,12 +1210,12 @@ async function approveLeave(req, res, next) {
              hr_action_at = ?,
              status = 'APPROVED'
          WHERE id = ?`,
-        [tlStatus, gmStatus, callerId, recordedName, comments, now, leaveId]
+        [tlStatus, salesHeadStatus, gmStatus, callerId, recordedName, comments, now, leaveId]
       );
 
       return res.status(200).json({
         success: true,
-        message: 'Leave officially approved by HR.',
+        message: 'Leave officially approved by HR / Management.',
         stage: 'APPROVED',
       });
     }
@@ -1173,13 +1251,29 @@ async function rejectLeave(req, res, next) {
 
     const activeDelegations = await getActiveDelegations(callerId);
     let actingHR = false;
+    let actingGM = false;
+    let actingSalesHead = false;
+    let actingLead = false;
     let delegatorName = null;
+    const delegatedLeadIds = [];
+
     activeDelegations.forEach((d) => {
+      delegatedLeadIds.push(d.delegatorId);
       const dRole = (d.delegatorRole || '').toUpperCase();
+      const dDesig = (d.delegatorDesignation || '').toLowerCase();
       const dPerms = d.delegatorPermissions || [];
       if (['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(dRole) || dPerms.includes('*') || dPerms.includes('leaves_manage')) {
         actingHR = true;
         if (!delegatorName) delegatorName = d.delegatorName;
+      }
+      if (actingHR || dRole === 'GENERAL_MANAGER' || dDesig.includes('general manager') || dDesig.includes('gm') || dPerms.includes('leaves_gm')) {
+        actingGM = true;
+      }
+      if (actingHR || dRole === 'SALES_HEAD' || dDesig.includes('sales head') || dPerms.includes('leaves_sales_head')) {
+        actingSalesHead = true;
+      }
+      if (['LEAD', 'TEAM_LEAD'].includes(dRole) || dPerms.includes('reports_own_team') || dPerms.includes('leaves_lead') || (d.delegatorManagedTeams && d.delegatorManagedTeams.length > 0)) {
+        actingLead = true;
       }
     });
 
@@ -1203,6 +1297,12 @@ async function rejectLeave(req, res, next) {
     }
 
     const isPermission = leave.leave_for === 'PERMISSION';
+    const isAssignedTL = (leave.tl_id && String(leave.tl_id) === String(callerId)) ||
+      delegatedLeadIds.some((did) => String(leave.tl_id) === String(did));
+    const canRejectAsLead = leave.status === 'PENDING_TL' && (isAssignedTL || ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('leaves_lead') || actingLead);
+    const canRejectAsSalesHead = leave.status === 'PENDING_SALES_HEAD' && (roleUpper === 'SALES_HEAD' || perms.includes('leaves_sales_head') || perms.includes('leaves_gm') || actingSalesHead);
+    const canRejectAsGM = leave.status === 'PENDING_GM' && (roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm') || actingGM);
+
     if (isPermission) {
       if (!canApprovePermissions) {
         return res.status(403).json({
@@ -1211,10 +1311,10 @@ async function rejectLeave(req, res, next) {
         });
       }
     } else {
-      if (!isHR && !isMD) {
+      if (!isHR && !isMD && !canRejectAsLead && !canRejectAsSalesHead && !canRejectAsGM) {
         return res.status(403).json({
           success: false,
-          message: 'Only Human Resources (HR) or MD has the authority to reject a leave application.',
+          message: 'You do not have authority to reject this leave application.',
         });
       }
     }

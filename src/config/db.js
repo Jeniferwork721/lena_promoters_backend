@@ -1145,6 +1145,12 @@ async function initializeDatabase() {
         \`tl_approved_name\` VARCHAR(150) NULL,
         \`tl_comments\` TEXT NULL,
         \`tl_action_at\` DATETIME NULL,
+        \`sales_head_id\` INT NULL,
+        \`sales_head_status\` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+        \`sales_head_approved_by\` INT NULL,
+        \`sales_head_approved_name\` VARCHAR(150) NULL,
+        \`sales_head_comments\` TEXT NULL,
+        \`sales_head_action_at\` DATETIME NULL,
         \`gm_id\` INT NULL,
         \`gm_status\` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
         \`gm_approved_by\` INT NULL,
@@ -1163,6 +1169,7 @@ async function initializeDatabase() {
         INDEX \`idx_leave_status\` (\`status\`),
         INDEX \`idx_leave_dates\` (\`application_date\`, \`period_from\`, \`period_to\`),
         INDEX \`idx_leave_tl\` (\`tl_id\`, \`tl_status\`),
+        INDEX \`idx_leave_sales_head\` (\`sales_head_id\`, \`sales_head_status\`),
         INDEX \`idx_leave_gm\` (\`gm_id\`, \`gm_status\`),
         INDEX \`idx_leave_hr\` (\`hr_status\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -1174,6 +1181,22 @@ async function initializeDatabase() {
       const [repCol] = await connection.query("SHOW COLUMNS FROM `leave_applications` LIKE 'acting_representative_id'");
       if (repCol.length === 0) {
         await connection.query('ALTER TABLE `leave_applications` ADD COLUMN `acting_representative_id` INT NULL, ADD COLUMN `acting_representative_name` VARCHAR(150) NULL');
+      }
+    } catch (_) {}
+
+    // Ensure sales_head columns exist on leave_applications (4-tier flow: TL -> Sales Head -> GM -> HR)
+    try {
+      const [shCol] = await connection.query("SHOW COLUMNS FROM `leave_applications` LIKE 'sales_head_status'");
+      if (shCol.length === 0) {
+        await connection.query(`
+          ALTER TABLE \`leave_applications\` 
+          ADD COLUMN \`sales_head_id\` INT NULL AFTER \`tl_action_at\`,
+          ADD COLUMN \`sales_head_status\` VARCHAR(20) NOT NULL DEFAULT 'PENDING' AFTER \`sales_head_id\`,
+          ADD COLUMN \`sales_head_approved_by\` INT NULL AFTER \`sales_head_status\`,
+          ADD COLUMN \`sales_head_approved_name\` VARCHAR(150) NULL AFTER \`sales_head_approved_by\`,
+          ADD COLUMN \`sales_head_comments\` TEXT NULL AFTER \`sales_head_approved_name\`,
+          ADD COLUMN \`sales_head_action_at\` DATETIME NULL AFTER \`sales_head_comments\`
+        `);
       }
     } catch (_) {}
 
