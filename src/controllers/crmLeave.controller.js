@@ -707,15 +707,16 @@ async function getLeaves(req, res, next) {
     const teamIdList = [...leadTeamIds].filter(Boolean);
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
-    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR;
-    const isGM = isHR || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm') || actingGM;
-    const isLead = !isGM && (
+    const isHR = !isMD && (roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR);
+    const isGM = !isMD && !isHR && (['GENERAL_MANAGER', 'SALES_HEAD'].includes(roleUpper) || perms.includes('leaves_gm') || actingGM);
+    const isLead = !isMD && !isHR && !isGM && (
       leadTeamIds.size > 0 ||
       ['LEAD', 'TEAM_LEAD'].includes(roleUpper) ||
       perms.includes('reports_own_team') ||
       perms.includes('leaves_lead') ||
       actingLead
     );
+    const canApprovePermissions = isMD || isHR || perms.includes('permissions_approve') || perms.includes('leaves_manage');
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
@@ -755,19 +756,29 @@ async function getLeaves(req, res, next) {
         // HR / MD sees all pending approvals company-wide: PENDING_HR (ready for final sign-off), plus PENDING_TL and PENDING_GM which HR can direct-approve
         where.push("la.status IN ('PENDING_HR', 'PENDING_TL', 'PENDING_GM')");
       } else if (isGM) {
-        // GM only acts after TL has approved (PENDING_GM). Does not see PENDING_TL or permissions.
-        where.push("la.status = 'PENDING_GM' AND la.leave_for != 'PERMISSION'");
+        // GM only acts after TL has approved (PENDING_GM). Permissions only shown if granted permissions_approve
+        if (canApprovePermissions) {
+          where.push("(la.status = 'PENDING_GM' OR (la.leave_for = 'PERMISSION' AND la.status IN ('PENDING_HR', 'PENDING')))");
+        } else {
+          where.push("la.status = 'PENDING_GM' AND la.leave_for != 'PERMISSION'");
+        }
       } else if (isLead) {
-        // TL acts only on PENDING_TL. Does not approve permissions.
+        // TL acts only on PENDING_TL for their team. Permissions only shown if granted permissions_approve
         const tlMatchList = [callerId, ...delegatedLeadIds];
         const tlPlaceholders = tlMatchList.map(() => '?').join(',');
-        if (teamIdList.length > 0) {
-          where.push(`la.status = 'PENDING_TL' AND la.leave_for != 'PERMISSION' AND (la.tl_id IN (${tlPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`);
+        const teamFilter = teamIdList.length > 0
+          ? `(la.tl_id IN (${tlPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`
+          : `la.tl_id IN (${tlPlaceholders})`;
+
+        if (canApprovePermissions) {
+          where.push(`((la.status = 'PENDING_TL' AND la.leave_for != 'PERMISSION') OR (la.leave_for = 'PERMISSION' AND la.status IN ('PENDING_HR', 'PENDING'))) AND ${teamFilter}`);
           params.push(...tlMatchList);
         } else {
-          where.push(`la.status = 'PENDING_TL' AND la.leave_for != 'PERMISSION' AND la.tl_id IN (${tlPlaceholders})`);
+          where.push(`la.status = 'PENDING_TL' AND la.leave_for != 'PERMISSION' AND ${teamFilter}`);
           params.push(...tlMatchList);
         }
+      } else {
+        where.push('1=0');
       }
     } else if (status && status !== 'ALL') {
       where.push('la.status = ?');
@@ -962,7 +973,7 @@ async function approveLeave(req, res, next) {
     });
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
-    const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR;
+    const isHR = !isMD && (roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR);
     const isGM = (
       roleUpper === 'GENERAL_MANAGER' ||
       roleUpper === 'SALES_HEAD' ||
@@ -972,6 +983,7 @@ async function approveLeave(req, res, next) {
       actingGM ||
       isMD
     );
+    const canApprovePermissions = isMD || isHR || perms.includes('permissions_approve') || perms.includes('leaves_manage');
 
     const [rows] = await pool.query(
       'SELECT * FROM leave_applications WHERE id = ?',
@@ -994,17 +1006,21 @@ async function approveLeave(req, res, next) {
     const now = new Date();
     const recordedName = delegatorName ? `${callerName} (Acting for ${delegatorName})` : callerName;
 
-    // 0. Permission check: Permissions are strictly approved by HR (or MD) only
-    if (leave.leave_for === 'PERMISSION' && !isHR && !isMD) {
+    // 0. Permission check: Permissions are strictly approved by HR/MD or anyone granted permissions_approve
+    if (leave.leave_for === 'PERMISSION' && !canApprovePermissions) {
       return res.status(403).json({
         success: false,
-        message: 'Permission requests can only be approved by HR or Managing Director.',
+        message: 'Permission requests can only be approved by HR, Managing Director, or staff granted permission approval access.',
       });
     }
 
-    // 1. Direct HR/MD final bypass or HR direct approval at any stage
-    if (action === 'DIRECT_HR_APPROVE' || ((isHR || isMD) && action === 'HR_APPROVE')) {
-      if (!isHR && !isMD) {
+    // 1. Direct HR/MD final bypass or HR direct approval at any stage OR Permission approval
+    if (
+      (leave.leave_for === 'PERMISSION' && canApprovePermissions) ||
+      action === 'DIRECT_HR_APPROVE' ||
+      ((isHR || isMD) && action === 'HR_APPROVE')
+    ) {
+      if (leave.leave_for !== 'PERMISSION' && !isHR && !isMD) {
         return res.status(403).json({ success: false, message: 'Only HR or Managing Director can grant direct final approval.' });
       }
       const tlStatus = leave.tl_status === 'APPROVED' ? 'APPROVED' : (leave.tl_status === 'REJECTED' ? 'REJECTED' : 'SKIPPED');
@@ -1026,7 +1042,7 @@ async function approveLeave(req, res, next) {
 
       return res.status(200).json({
         success: true,
-        message: 'Leave officially approved by HR / Management.',
+        message: leave.leave_for === 'PERMISSION' ? 'Permission officially approved.' : 'Leave officially approved by HR / Management.',
         stage: 'APPROVED',
       });
     }
@@ -1169,13 +1185,7 @@ async function rejectLeave(req, res, next) {
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
     const isHR = isMD || roleUpper === 'HR' || perms.includes('leaves_manage') || actingHR;
-
-    if (!isHR && !isMD) {
-      return res.status(403).json({
-        success: false,
-        message: 'Only Human Resources (HR) or MD has the authority to reject a leave application.',
-      });
-    }
+    const canApprovePermissions = isMD || isHR || perms.includes('permissions_approve') || perms.includes('leaves_manage');
 
     const recordedName = delegatorName ? `${callerName} (Acting for ${delegatorName})` : callerName;
 
@@ -1190,6 +1200,23 @@ async function rejectLeave(req, res, next) {
     }
     if (leave.status === 'REJECTED') {
       return res.status(400).json({ success: false, message: 'Leave is already rejected.' });
+    }
+
+    const isPermission = leave.leave_for === 'PERMISSION';
+    if (isPermission) {
+      if (!canApprovePermissions) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only HR, Managing Director, or authorized staff with permission approval access can reject permission requests.',
+        });
+      }
+    } else {
+      if (!isHR && !isMD) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only Human Resources (HR) or MD has the authority to reject a leave application.',
+        });
+      }
     }
 
     const now = new Date();
