@@ -65,6 +65,8 @@ function formatVisitor(v) {
   const ymdDate = formatDateToYmd(v.visit_date);
   const niceDate = formatNiceDate(v.visit_date);
   const niceTime = formatNiceTime(v.visit_time);
+  const inTime = v.in_time || null;
+  const outTime = v.out_time || null;
   const dateTimeFormatted = niceDate ? (niceTime ? `${niceDate} · ${niceTime}` : niceDate) : '';
 
   return {
@@ -89,6 +91,9 @@ function formatVisitor(v) {
     visitTime: v.visit_time || '',
     visitTimeFormatted: niceTime,
     visitDateTimeFormatted: dateTimeFormatted,
+    // Entry and Exit Time fields
+    inTime: inTime,
+    outTime: outTime,
     ticketStatus: v.ticket_status || 'Open',
     conclusion: v.conclusion || '',
     conclusionRemarks: v.conclusion_remarks || '',
@@ -258,6 +263,10 @@ async function registerVisitor(req, res) {
       visit_date,
       visitTime,
       visit_time,
+      inTime,
+      in_time,
+      outTime,
+      out_time,
     } = req.body;
 
     const visitorName = (name || '').trim();
@@ -291,6 +300,12 @@ async function registerVisitor(req, res) {
     const now = new Date();
     const finalVisitDate = formatDateToYmd(visitDate || visit_date) || formatDateToYmd(now);
     const finalVisitTime = (visitTime || visit_time || `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`).trim();
+    
+    // Entry time (inTime) - auto-calculated when entry is entered
+    const finalInTime = (inTime || in_time || `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`).trim();
+    
+    // Exit time (outTime) - defaults to null until set after refreshment update
+    const finalOutTime = (outTime || out_time || null);
 
     const visitorId = await generateNextVisitorId();
     const ticketId = await generateNextTicketId();
@@ -300,8 +315,8 @@ async function registerVisitor(req, res) {
         visitor_id, ticket_id, name, mobile_number, purpose_of_visit,
         person_to_meet, person_to_meet_id, branch_id, branch_name, referred_by,
         refreshment_status, initial_remarks, registered_by_id, registered_by_name,
-        visit_date, visit_time, ticket_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Open')`,
+        visit_date, visit_time, in_time, out_time, ticket_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Open')`,
       [
         visitorId,
         ticketId,
@@ -319,6 +334,8 @@ async function registerVisitor(req, res) {
         caller.full_name,
         finalVisitDate,
         finalVisitTime,
+        finalInTime,
+        finalOutTime,
       ]
     );
 

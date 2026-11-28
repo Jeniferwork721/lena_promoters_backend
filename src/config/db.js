@@ -1076,6 +1076,39 @@ async function initializeDatabase() {
     `);
     console.log('📞 Verified staff_call_logs table in DB');
 
+    // 16b. CRM Follow-ups Table (v2.2)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS \`crm_followups\` (
+        \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
+        \`report_id\` VARCHAR(64) NULL,
+        \`customer_phone\` VARCHAR(30) NOT NULL,
+        \`customer_name\` VARCHAR(150) NULL,
+        \`due_date\` DATE NOT NULL,
+        \`due_time\` TIME NULL,
+        \`followup_type\` ENUM('PHONE_CALL', 'WHATSAPP', 'OFFICE_MEETING', 'SITE_VISIT') NOT NULL,
+        \`agenda_notes\` TEXT NULL,
+        \`opportunity_name\` VARCHAR(255) NULL,
+        \`status\` ENUM('PENDING', 'COMPLETED', 'CANCELLED') NOT NULL DEFAULT 'PENDING',
+        \`completed_at\` DATETIME NULL,
+        \`completed_by_staff_id\` INT NULL,
+        \`outcome\` VARCHAR(255) NULL,
+        \`call_status\` VARCHAR(100) NULL,
+        \`notes\` TEXT NULL,
+        \`original_due_date\` DATE NULL,
+        \`original_due_time\` TIME NULL,
+        \`reschedule_count\` INT NOT NULL DEFAULT 0,
+        \`cancelled_reason\` TEXT NULL,
+        \`staff_id\` INT NOT NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_followup_staff_status\` (\`staff_id\`, \`status\`),
+        INDEX \`idx_followup_due_date\` (\`due_date\`, \`status\`),
+        INDEX \`idx_followup_customer_phone\` (\`customer_phone\`),
+        UNIQUE KEY \`uq_followup_staff_customer_datetime\` (\`staff_id\`, \`customer_phone\`, \`due_date\`, \`due_time\`, \`status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    console.log('📅 Verified crm_followups table in DB');
+
     // 17. Daily Promotional Posts Table (One post per day, for customer app weekly carousel)
     await connection.query(`
       CREATE TABLE IF NOT EXISTS \`daily_posts\` (
@@ -1184,7 +1217,7 @@ async function initializeDatabase() {
       }
     } catch (_) {}
 
-    // Ensure sales_head columns exist on leave_applications (4-tier flow: TL -> Sales Head -> GM -> HR)
+    // Ensure sales_head columns exist on leave_applications (4-tier / 5-tier flow)
     try {
       const [shCol] = await connection.query("SHOW COLUMNS FROM `leave_applications` LIKE 'sales_head_status'");
       if (shCol.length === 0) {
@@ -1196,6 +1229,22 @@ async function initializeDatabase() {
           ADD COLUMN \`sales_head_approved_name\` VARCHAR(150) NULL AFTER \`sales_head_approved_by\`,
           ADD COLUMN \`sales_head_comments\` TEXT NULL AFTER \`sales_head_approved_name\`,
           ADD COLUMN \`sales_head_action_at\` DATETIME NULL AFTER \`sales_head_comments\`
+        `);
+      }
+    } catch (_) {}
+
+    // Ensure doc_head columns exist on leave_applications (5-tier Head Office flow: TL -> Sales Head -> Doc Head -> GM -> HR)
+    try {
+      const [dhCol] = await connection.query("SHOW COLUMNS FROM `leave_applications` LIKE 'doc_head_status'");
+      if (dhCol.length === 0) {
+        await connection.query(`
+          ALTER TABLE \`leave_applications\` 
+          ADD COLUMN \`doc_head_id\` INT NULL AFTER \`sales_head_action_at\`,
+          ADD COLUMN \`doc_head_status\` VARCHAR(20) NOT NULL DEFAULT 'PENDING' AFTER \`doc_head_id\`,
+          ADD COLUMN \`doc_head_approved_by\` INT NULL AFTER \`doc_head_status\`,
+          ADD COLUMN \`doc_head_approved_name\` VARCHAR(150) NULL AFTER \`doc_head_approved_by\`,
+          ADD COLUMN \`doc_head_comments\` TEXT NULL AFTER \`doc_head_approved_name\`,
+          ADD COLUMN \`doc_head_action_at\` DATETIME NULL AFTER \`doc_head_comments\`
         `);
       }
     } catch (_) {}

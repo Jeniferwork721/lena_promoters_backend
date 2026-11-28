@@ -15,6 +15,7 @@ const crmGreetings = require('../controllers/crmGreetings.controller');
 const crmLeave = require('../controllers/crmLeave.controller');
 const crmGatePass = require('../controllers/crmGatePass.controller');
 const crmVisitor = require('../controllers/crmVisitor.controller');
+const crmFollowup = require('../controllers/crmFollowup.controller');
 const authController = require('../controllers/auth.controller');
 
 // All CRM endpoints require staff token authentication
@@ -145,5 +146,14 @@ router.get('/visitors/:id', crmVisitor.getVisitorById);
 router.patch('/visitors/:id/conclusion', crmVisitor.updateVisitorConclusion);
 router.patch('/visitors/:id/refreshment', crmVisitor.updateVisitorRefreshment);
 router.patch('/visitors/:id/close', crmVisitor.closeVisitorTicket);
+
+// ==========================================================
+// 16. CRM FOLLOW-UPS (v2.2)
+// ==========================================================
+router.post('/followups', crmFollowup.createFollowup);
+router.get('/followups', crmFollowup.getFollowups);
+router.patch('/followups/:id/complete', crmFollowup.completeFollowup);
+router.patch('/followups/:id/reschedule', crmFollowup.rescheduleFollowup);
+router.patch('/followups/:id/cancel', crmFollowup.cancelFollowup);
 
 module.exports = router;
