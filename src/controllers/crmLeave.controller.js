@@ -155,6 +155,9 @@ function formatLeaveRow(la) {
     hrActionAt: la.hr_action_at || null,
     hr_action_at: la.hr_action_at || null,
     status: la.status,
+    branch: la.branch || la.branch_location || 'Main Branch',
+    shift: la.shift || la.working_hours || '09:00 AM - 06:00 PM',
+    workingHours: la.shift || la.working_hours || '09:00 AM - 06:00 PM',
     createdAt: la.created_at || '',
     created_at: la.created_at || '',
     updatedAt: la.updated_at || '',
@@ -760,7 +763,7 @@ async function getLeaves(req, res, next) {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const offset = (page - 1) * limit;
 
-    const { status, stage, department, q, month, date, from, to, leaveType, type, leaveFor, employeeId } = req.query;
+    const { status, stage, department, q, month, date, from, to, leaveType, type, leaveFor, employeeId, branch, teamId } = req.query;
 
     let where = ['1=1'];
     let params = [];
@@ -848,6 +851,16 @@ async function getLeaves(req, res, next) {
     if (department && department !== 'ALL') {
       where.push('la.department = ?');
       params.push(department);
+    }
+
+    if (branch && branch !== 'ALL') {
+      where.push('s.branch_location = ?');
+      params.push(branch);
+    }
+
+    if (teamId && teamId !== 'ALL') {
+      where.push('s.team_id = ?');
+      params.push(teamId);
     }
 
     if (month && month !== 'ALL') {
@@ -1462,6 +1475,9 @@ async function getMonthlyLeaveSummary(req, res, next) {
 
     const targetMonth = req.query.month || getCurrentMonthString();
     const department = req.query.department;
+    const branch = req.query.branch;
+    const teamId = req.query.teamId;
+    const employeeId = req.query.employeeId;
     const q = req.query.q;
 
     let staffWhere = ["s.is_active = 1 AND s.role NOT IN ('ADMIN', 'SUPER_ADMIN')"];
@@ -1490,6 +1506,18 @@ async function getMonthlyLeaveSummary(req, res, next) {
       staffWhere.push('s.department = ?');
       staffParams.push(department);
     }
+    if (branch && branch !== 'ALL') {
+      staffWhere.push('s.branch_location = ?');
+      staffParams.push(branch);
+    }
+    if (teamId && teamId !== 'ALL') {
+      staffWhere.push('s.team_id = ?');
+      staffParams.push(teamId);
+    }
+    if (employeeId && employeeId !== 'ALL') {
+      staffWhere.push('s.id = ?');
+      staffParams.push(employeeId);
+    }
     if (q && q.trim()) {
       staffWhere.push('(s.full_name LIKE ? OR s.employee_id LIKE ? OR s.department LIKE ? OR s.designation LIKE ?)');
       staffParams.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
@@ -1497,7 +1525,8 @@ async function getMonthlyLeaveSummary(req, res, next) {
 
     const staffWhereSql = staffWhere.length > 0 ? `WHERE ${staffWhere.join(' AND ')}` : '';
     const [staffList] = await pool.query(
-      `SELECT s.id, s.employee_id as employeeCode, s.full_name as name, s.department, s.designation, s.role
+      `SELECT s.id, s.employee_id as employeeCode, s.full_name as name, s.department, s.designation, s.role,
+              s.branch_location as branch, s.working_hours as shift
        FROM staff_users s
        ${staffWhereSql}
        ORDER BY s.full_name ASC`,
@@ -1603,10 +1632,16 @@ async function getMonthlyLeaveSummary(req, res, next) {
 
       return {
         id: s.id,
+        employeeId: s.id,
         employeeCode: s.employeeCode || `EMP${s.id}`,
         name: s.name,
+        employeeName: s.name,
+        full_name: s.name,
         department: s.department || 'General',
         designation: s.designation || 'Staff',
+        branch: s.branch || 'Main Branch',
+        shift: s.shift || '09:00 AM - 06:00 PM',
+        workingHours: s.shift || '09:00 AM - 06:00 PM',
         paidLeavesLimit: MAX_PAID_LEAVES_PER_MONTH,
         paidLeavesTaken: paidTaken,
         paidLeavesRemaining: paidRemaining,
@@ -1640,9 +1675,263 @@ async function getMonthlyLeaveSummary(req, res, next) {
   }
 }
 
+/**
+ * 10. GET /leaves/flow-hierarchy
+ * Returns company-wide leave approver tiers (TL, Sales Head, GM, HR) and staff reporting hierarchy.
+ * Allows MD, Admin, HR, GM, and Leads to view the complete approver flow and delegation roster.
+ */
+async function getFlowHierarchy(req, res, next) {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+
+    const [staffRows] = await pool.query(`
+      SELECT 
+        s.id,
+        s.employee_id as employeeCode,
+        s.full_name as name,
+        s.phone_number as phone,
+        s.email,
+        s.role,
+        s.designation,
+        s.department,
+        s.branch_location as branch,
+        s.working_hours as shift,
+        s.team_id as teamId,
+        t.name as teamName,
+        t.lead_id as leadId,
+        lead_user.full_name as leadName,
+        s.acting_delegate_id as actingDelegateId,
+        s.acting_delegate_name as actingDelegateName,
+        s.acting_delegate_until as actingDelegateUntil,
+        s.permissions,
+        (SELECT COUNT(*) FROM staff_users m WHERE m.team_id = s.team_id AND s.team_id IS NOT NULL) as teamMemberCount
+      FROM staff_users s
+      LEFT JOIN teams t ON s.team_id = t.id
+      LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
+      WHERE s.is_active = 1
+      ORDER BY s.full_name ASC
+    `);
+
+    const [teamRows] = await pool.query(`
+      SELECT 
+        t.id,
+        t.name,
+        t.lead_id as leadId,
+        s.full_name as leadName,
+        (SELECT COUNT(*) FROM staff_users m WHERE m.team_id = t.id) as memberCount
+      FROM teams t
+      LEFT JOIN staff_users s ON t.lead_id = s.id
+      ORDER BY t.name ASC
+    `);
+
+    const tlApprovers = [];
+    const salesHeadApprovers = [];
+    const gmApprovers = [];
+    const hrApprovers = [];
+    const activeReps = [];
+
+    const enrichedStaff = staffRows.map((s) => {
+      const perms = parsePermissions(s.permissions);
+      const roleUpper = (s.role || '').toUpperCase();
+      const desigLower = (s.designation || '').toLowerCase();
+
+      const isTL = ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('leaves_lead') || perms.includes('reports_own_team');
+      const isSalesHead = ['SALES_HEAD'].includes(roleUpper) || perms.includes('leaves_sales_head');
+      const isGM = ['GENERAL_MANAGER'].includes(roleUpper) || desigLower.includes('general manager') || desigLower.includes('gm') || perms.includes('leaves_gm');
+      const isHR = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR'].includes(roleUpper) || perms.includes('*') || perms.includes('leaves_manage');
+
+      const untilStr = s.actingDelegateUntil ? formatDateToYmd(s.actingDelegateUntil) : null;
+      const isRepActive = Boolean(s.actingDelegateId && (!untilStr || untilStr >= today));
+
+      const staffObj = {
+        id: s.id,
+        employeeCode: s.employeeCode || `EMP${s.id}`,
+        name: s.name,
+        phone: s.phone || '',
+        email: s.email || '',
+        role: s.role,
+        designation: s.designation || 'Staff',
+        department: s.department || 'General',
+        branch: s.branch || 'Main Branch',
+        shift: s.shift || '09:00 AM - 06:00 PM',
+        teamId: s.teamId || null,
+        teamName: s.teamName || 'Direct / Unassigned',
+        leadId: s.leadId || null,
+        leadName: s.leadName || '',
+        actingDelegateId: s.actingDelegateId || null,
+        actingDelegateName: s.actingDelegateName || '',
+        actingDelegateUntil: untilStr,
+        isRepActive,
+        permissions: perms,
+        isTL,
+        isSalesHead,
+        isGM,
+        isHR,
+      };
+
+      if (isTL) tlApprovers.push(staffObj);
+      if (isSalesHead) salesHeadApprovers.push(staffObj);
+      if (isGM) gmApprovers.push(staffObj);
+      if (isHR) hrApprovers.push(staffObj);
+      if (isRepActive) activeReps.push(staffObj);
+
+      return staffObj;
+    });
+
+    return res.status(200).json({
+      success: true,
+      approvers: {
+        tl: tlApprovers,
+        salesHead: salesHeadApprovers,
+        gm: gmApprovers,
+        hr: hrApprovers,
+        activeReps,
+        counts: {
+          tl: tlApprovers.length,
+          salesHead: salesHeadApprovers.length,
+          gm: gmApprovers.length,
+          hr: hrApprovers.length,
+          activeReps: activeReps.length,
+          totalStaff: enrichedStaff.length,
+        },
+      },
+      staff: enrichedStaff,
+      teams: teamRows,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * 11. PATCH /employees/:id/flow-hierarchy
+ * Fast inline re-assignment of an employee's Team/TL, Acting Representative, and Approver Tiers
+ * MD, Admin, HR, or GM access.
+ */
+async function updateFlowHierarchy(req, res, next) {
+  try {
+    const callerId = req.staff?.id;
+    const perms = parsePermissions(req.staff?.permissions);
+    const roleUpper = (req.staff?.role || '').toUpperCase();
+    const canManage = ['ADMIN', 'SUPER_ADMIN', 'MD', 'HR', 'GENERAL_MANAGER'].includes(roleUpper) ||
+                      perms.includes('*') || perms.includes('leaves_manage') || perms.includes('leaves_gm');
+
+    if (!canManage) {
+      return res.status(403).json({ success: false, message: 'Unauthorized. Only MD, Admin, HR, or GM can update approval flow hierarchy.' });
+    }
+
+    const employeeId = req.params.id;
+    const [empRows] = await pool.query('SELECT * FROM staff_users WHERE id = ? LIMIT 1', [employeeId]);
+    if (empRows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found.' });
+    }
+
+    const {
+      teamId,
+      leadId,
+      actingDelegateId,
+      actingDelegateName,
+      actingDelegateUntil,
+      permissions,
+      role,
+      designation,
+      clearRepresentative,
+    } = req.body;
+
+    const updates = [];
+    const updateParams = [];
+
+    // 1. Team / TL Reassignment
+    if (teamId !== undefined || leadId !== undefined) {
+      let finalTeamId = null;
+      if (teamId !== undefined && teamId !== 'UNASSIGNED' && teamId !== null && teamId !== '') {
+        finalTeamId = Number(teamId);
+      } else if (leadId) {
+        const [tRows] = await pool.query('SELECT id FROM teams WHERE lead_id = ? LIMIT 1', [leadId]);
+        if (tRows.length > 0) {
+          finalTeamId = tRows[0].id;
+        } else {
+          const [leadUserRows] = await pool.query('SELECT full_name FROM staff_users WHERE id = ?', [leadId]);
+          const leadName = leadUserRows[0]?.full_name || 'Team';
+          const [ins] = await pool.query('INSERT INTO teams (name, lead_id) VALUES (?, ?)', [`${leadName}'s Team`, leadId]);
+          finalTeamId = ins.insertId;
+        }
+      }
+      updates.push('team_id = ?');
+      updateParams.push(finalTeamId);
+    }
+
+    // 2. Acting Representative Assignment or Deletion
+    if (clearRepresentative === true || actingDelegateId === null || actingDelegateId === '' || actingDelegateId === 0) {
+      updates.push('acting_delegate_id = NULL, acting_delegate_name = NULL, acting_delegate_until = NULL');
+    } else if (actingDelegateId !== undefined) {
+      let repName = actingDelegateName;
+      if (!repName && actingDelegateId) {
+        const [repRows] = await pool.query('SELECT full_name FROM staff_users WHERE id = ?', [actingDelegateId]);
+        repName = repRows[0]?.full_name || null;
+      }
+      updates.push('acting_delegate_id = ?, acting_delegate_name = ?, acting_delegate_until = ?');
+      updateParams.push(actingDelegateId, repName, actingDelegateUntil || null);
+    }
+
+    // 3. Permissions (Approval Tiers)
+    if (permissions !== undefined) {
+      const permString = Array.isArray(permissions) ? JSON.stringify(permissions) : (typeof permissions === 'string' ? permissions : JSON.stringify([]));
+      updates.push('permissions = ?');
+      updateParams.push(permString);
+    }
+
+    // 4. Role / Designation
+    if (role !== undefined && role !== '') {
+      updates.push('role = ?');
+      updateParams.push(role);
+    }
+    if (designation !== undefined && designation !== '') {
+      updates.push('designation = ?');
+      updateParams.push(designation);
+    }
+
+    if (updates.length > 0) {
+      updateParams.push(employeeId);
+      await pool.query(`UPDATE staff_users SET ${updates.join(', ')} WHERE id = ?`, updateParams);
+    }
+
+    // Fetch updated record
+    const [updatedRows] = await pool.query(`
+      SELECT 
+        s.id, s.employee_id as employeeCode, s.full_name as name, s.phone_number as phone,
+        s.email, s.role, s.designation, s.department, s.branch_location as branch,
+        s.team_id as teamId, t.name as teamName, t.lead_id as leadId,
+        lead_user.full_name as leadName,
+        s.acting_delegate_id as actingDelegateId,
+        s.acting_delegate_name as actingDelegateName,
+        s.acting_delegate_until as actingDelegateUntil,
+        s.permissions
+      FROM staff_users s
+      LEFT JOIN teams t ON s.team_id = t.id
+      LEFT JOIN staff_users lead_user ON t.lead_id = lead_user.id
+      WHERE s.id = ?
+    `, [employeeId]);
+
+    const updated = updatedRows[0] || {};
+    return res.status(200).json({
+      success: true,
+      message: 'Hierarchy and flow assignment updated successfully.',
+      data: {
+        ...updated,
+        permissions: parsePermissions(updated.permissions),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getLeaveQuota,
   getMonthlyLeaveSummary,
+  getFlowHierarchy,
+  updateFlowHierarchy,
   applyLeave,
   getMyLeaves,
   getLeaves,

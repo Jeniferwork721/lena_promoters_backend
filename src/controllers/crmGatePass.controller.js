@@ -129,6 +129,7 @@ function formatGatePass(gp) {
     returnRecordedBy: gp.return_recorded_by || null,
     returnRecordedName: gp.return_recorded_name || null,
     remarks: gp.remarks || '',
+    branch: gp.branch || gp.branch_location || 'Main Branch',
     createdAt: gp.created_at || '',
   };
 }
@@ -396,20 +397,33 @@ async function getGatePasses(req, res, next) {
 
     const isMD = ['ADMIN', 'SUPER_ADMIN', 'MD'].includes(roleUpper) || perms.includes('*');
     const isGatePassManager = isMD || roleUpper === 'HR' || perms.includes('gatepass_approve') || perms.includes('gatepass_manage') || actingHR;
+    const isGM = isGatePassManager || roleUpper === 'GENERAL_MANAGER' || perms.includes('leaves_gm') || actingGM;
+    const isLead = !isGM && (leadTeamIds.size > 0 || ['LEAD', 'TEAM_LEAD'].includes(roleUpper) || perms.includes('reports_own_team') || perms.includes('leaves_lead') || actingLead);
 
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const offset = (page - 1) * limit;
 
-    const { status, purpose, department, date, month, q } = req.query;
+    const { status, purpose, department, date, month, q, branch, employeeId, teamId } = req.query;
 
     let where = ['1=1'];
     let params = [];
 
-    if (isGatePassManager) {
-      // HR / MD / Authorized Gate Pass Desk (e.g. Front Office with gatepass_approve) can see all company gate passes
+    if (isGatePassManager || isGM) {
+      // HR / MD / GM / Authorized Gate Pass Desk can see all company gate passes
+    } else if (isLead) {
+      // Team lead can see teammates' gate passes
+      const matchStaffIds = [callerId, ...delegatedLeadIds];
+      const matchPlaceholders = matchStaffIds.map(() => '?').join(',');
+      if (teamIdList.length > 0) {
+        where.push(`(gp.employee_id IN (${matchPlaceholders}) OR s.team_id IN (${teamIdList.join(',')}))`);
+        params.push(...matchStaffIds);
+      } else {
+        where.push(`gp.employee_id IN (${matchPlaceholders})`);
+        params.push(...matchStaffIds);
+      }
     } else {
-      // Normal employee / staff without gate pass permissions sees only their own gate passes
+      // Normal employee / staff sees only their own gate passes
       where.push('gp.employee_id = ?');
       params.push(callerId);
     }
@@ -425,6 +439,18 @@ async function getGatePasses(req, res, next) {
     if (department && department !== 'ALL') {
       where.push('gp.department = ?');
       params.push(department);
+    }
+    if (branch && branch !== 'ALL') {
+      where.push('s.branch_location = ?');
+      params.push(branch);
+    }
+    if (employeeId && employeeId !== 'ALL') {
+      where.push('gp.employee_id = ?');
+      params.push(employeeId);
+    }
+    if (teamId && teamId !== 'ALL') {
+      where.push('s.team_id = ?');
+      params.push(teamId);
     }
     if (date) {
       where.push('gp.date = ?');
@@ -443,7 +469,7 @@ async function getGatePasses(req, res, next) {
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const [countRows] = await pool.query(
-      `SELECT COUNT(*) as total FROM gate_passes gp ${whereSql}`,
+      `SELECT COUNT(*) as total FROM gate_passes gp LEFT JOIN staff_users s ON gp.employee_id = s.id ${whereSql}`,
       params
     );
     const total = countRows[0]?.total || 0;
@@ -466,7 +492,9 @@ async function getGatePasses(req, res, next) {
         SUM(CASE WHEN gp.approval_status = 'OUT' THEN 1 ELSE 0 END) as outCount,
         SUM(CASE WHEN gp.approval_status = 'RETURNED' THEN 1 ELSE 0 END) as returnedCount,
         SUM(CASE WHEN gp.approval_status = 'REJECTED' THEN 1 ELSE 0 END) as rejectedCount
-       FROM gate_passes gp ${whereSql}`,
+       FROM gate_passes gp
+       LEFT JOIN staff_users s ON gp.employee_id = s.id
+       ${whereSql}`,
       params
     );
 

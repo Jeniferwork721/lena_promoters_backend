@@ -114,6 +114,8 @@ router.post('/greetings/send-single', requireMD, crmGreetings.sendSingleGreeting
 // ==========================================================
 router.get('/leaves/quota', crmLeave.getLeaveQuota);
 router.get('/leaves/monthly-summary', crmLeave.getMonthlyLeaveSummary);
+router.get('/leaves/flow-hierarchy', crmLeave.getFlowHierarchy);
+router.patch('/employees/:id/flow-hierarchy', crmLeave.updateFlowHierarchy);
 router.post('/leaves', crmLeave.applyLeave);
 router.get('/leaves/my', crmLeave.getMyLeaves);
 router.get('/leaves', crmLeave.getLeaves);
